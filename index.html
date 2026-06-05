@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Fairman Family Budget Dashboard v26</title>
+<title>Fairman Family Budget Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#f7f3ea;--card:#fffdf8;--ink:#263238;--muted:#667085;--line:#d0d5dd;--green:#dff4df;--pink:#f7dddd;--blue:#dbeafe;--cream:#fff7ed;--bad:#b42318;--warn:#b54708;--ok:#027a48;--dark:#263238}
@@ -19,11 +19,30 @@ body.loading #loadingOverlay{display:flex}
 .dataHealth .metric .value{font-size:16px}
 @media(max-width:900px){.dataHealth{grid-template-columns:1fr 1fr}}
 </style>
-</head>
-<body class="loading">
-<header><h1>Fairman Family Budget Dashboard</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 
-<div id="loadingOverlay"><div class="loaderBox"><div class="spinner"></div><h2 style="border:0;background:transparent;padding:0;margin:0 0 8px">Loading Google Sheet…</h2><div class="small">Pulling the latest budget, transactions, bills, balances, and categories from the Sheet. This prevents the stale starter numbers from flashing first.</div><div id="loadingDetail" class="tiny" style="margin-top:10px">If this hangs, open the Import tab and check the Apps Script URL.</div></div></div>
+<style>
+body.loading main{opacity:1!important;pointer-events:auto!important}
+#loadingOverlay{display:none!important}
+.metric .value.loading-value{color:#667085!important}
+.metric .value.loading-value::after{
+  content:"";
+  display:inline-block;
+  width:34px;
+  height:11px;
+  margin-left:8px;
+  border-radius:999px;
+  background:linear-gradient(90deg,#e5e7eb,#f8fafc,#e5e7eb);
+  background-size:200% 100%;
+  animation:v28pulse 1.1s linear infinite;
+}
+@keyframes v28pulse{0%{background-position:200% 0}100%{background-position:-200% 0}}
+</style>
+
+</head>
+<body>
+<header><h1>Fairman Family Budget Dashboard v28</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+
+</div>
 <main>
 <section id="daily" class="panel active"><div class="grid"><div class="card blue span12"><h2>Today’s Snapshot</h2><div class="section"><div class="metrics" id="topMetrics"></div></div></div><div class="card blue span6 katy-card"><h2>Katy Daily View</h2><div class="section" id="katyView"></div></div><div class="card blue span6 joe-card"><h2>Joe Daily View</h2><div class="section" id="joeView"></div></div><div class="card span8"><h2>What’s Left This Month</h2><div class="section"><div class="small">Only transactions dated in the selected budget month are counted here. Prior-month uploads are ignored for June spending.</div><table id="remainingTable"></table></div></div><div class="card pink span4"><h2>Needs Review</h2><div class="section"><table id="reviewTable"></table></div></div><div class="card span6"><h2>Sinking Fund Positions</h2><div class="section"><table id="sinkingPositionTable"></table></div></div><div class="card span6"><h2>Upcoming Scheduled Money Out</h2><div class="section"><table id="upcomingTable"></table></div></div><div class="card pink span6"><h2>Confirmed Payments</h2><div class="section"><table id="confirmedTable"></table></div></div></div></section>
 <section id="transactions" class="panel"><div class="card"><h2>Transactions</h2><div class="section"><div class="toolbar"><select id="filterOwner"><option value="">All owners</option><option>Joe</option><option>Katy</option><option>Shared/Unknown</option></select><select id="filterCategory"><option value="">All categories</option></select><input id="searchTx" placeholder="Search"><button id="saveChanges" class="primary">Save Changes</button></div><table id="txTable"></table></div></div></section>
@@ -2231,6 +2250,254 @@ render();
 
   addMonthToolsV26();
   try { if(typeof render === 'function' && window.app) render(); } catch(e) { console.warn('v26 render skipped', e); }
+})();
+</script>
+
+
+<script>
+/* ===== v27: variable necessities count as spending decisions/budget impact =====
+   Root cause fixed: Groceries/Gas/Dog Food/Basic Health were stored under Bills,
+   not spendingBudgets, so transactionSpendAmount returned 0 for them.
+*/
+(function(){
+  const VARIABLE_NECESSITY_NAMES_V27 = new Set([
+    'Groceries',
+    'Dog Food',
+    'Auto Fuel & Maintenance',
+    'Basic Health & Personal Care',
+    'House Cleaning',
+    'Services'
+  ]);
+
+  function currentMonthV27(t){
+    if(!t) return false;
+    if(typeof currentMonthTxV21 === 'function') return currentMonthTxV21(t);
+    if(typeof inBudgetMonth === 'function') return inBudgetMonth(t);
+    return String(t.date||'').slice(0,7) === app.month;
+  }
+  function treatmentV27(t){
+    if(typeof transactionTreatmentV21 === 'function') return transactionTreatmentV21(t);
+    return t.treatment || t.type || 'Auto';
+  }
+  function isMonthlyBudgetCategoryV27(cat){ return (app.spendingBudgets||[]).some(b=>b.name===cat); }
+  function isSinkingCategoryV27(cat){ return (app.sinkingFunds||[]).some(f=>f.name===cat); }
+  function isVariableNecessityV27(cat){ return VARIABLE_NECESSITY_NAMES_V27.has(String(cat||'')); }
+  function isTrackedCategoryV27(cat){ return isMonthlyBudgetCategoryV27(cat) || isSinkingCategoryV27(cat) || isVariableNecessityV27(cat); }
+  function isFixedBillNameV27(cat){
+    if(isVariableNecessityV27(cat)) return false;
+    return (app.bills||[]).some(b=>b.name===cat);
+  }
+  function isDebtNameV27(cat){ return [...(app.creditCards||[]).map(c=>c.name), ...(app.loans||[]).map(l=>l.name)].includes(cat); }
+  function variableBudgetV27(cat){
+    const b=(app.spendingBudgets||[]).find(x=>x.name===cat);
+    if(b) return Number(b.budget)||0;
+    const bill=(app.bills||[]).find(x=>x.name===cat);
+    return bill ? Number(bill.amount)||0 : 0;
+  }
+  function combinedMonthlyBudgetRowsV27(){
+    const rows=[];
+    (app.spendingBudgets||[]).forEach(b=>rows.push({name:b.name, friendly:b.friendly||b.name, budget:Number(b.budget)||0, source:'spending'}));
+    (app.bills||[]).forEach(b=>{
+      if(isVariableNecessityV27(b.name) && !(app.spendingBudgets||[]).some(x=>x.name===b.name)){
+        rows.push({name:b.name, friendly:b.name, budget:Number(b.amount)||0, source:'variable'});
+      }
+    });
+    return rows;
+  }
+
+  // The corrected budget impact function.
+  window.transactionSpendAmount = function(t){
+    if(!currentMonthV27(t)) return 0;
+    const cat=String(t.category||'');
+    if(!isTrackedCategoryV27(cat)) return 0;
+    const treatment=treatmentV27(t);
+    const amount=Number(t.amount)||0;
+    const src=String(t.source||t.account||'').toLowerCase();
+
+    if(['Ignore / Transfer','Income','Sinking Fund Contribution'].includes(treatment)) return 0;
+    if(treatment === 'Reimbursement / Credit') return -Math.abs(amount);
+    if(treatment === 'Expense') return Math.abs(amount);
+
+    // Auto: card charges are positive purchases; checking withdrawals are negative purchases.
+    if(src.includes('apple') || (src.includes('card') && !src.includes('schwab'))) return amount > 0 ? amount : 0;
+    return amount < 0 ? Math.abs(amount) : -Math.abs(amount);
+  };
+
+  window.txSpendByCategory = function(cat){
+    return sum((app.transactions||[]).filter(t=>t.category===cat), t=>transactionSpendAmount(t));
+  };
+
+  function sinkingFundContributionAmountV27(fundName){
+    return sum((app.transactions||[]).filter(t=> currentMonthV27(t) && t.category===fundName && treatmentV27(t)==='Sinking Fund Contribution'), t=>Math.abs(Number(t.amount)||0));
+  }
+  function sinkingFundPositionV27(f){
+    return (Number(f.balance)||0) + (Number(f.saved)||0) + sinkingFundContributionAmountV27(f.name) - txSpendByCategory(f.name);
+  }
+
+  function shouldShowSpendingDecisionV27(t, owner){
+    if(!t || !currentMonthV27(t)) return false;
+    if((t.owner||'') !== owner) return false;
+    const cat=String(t.category||'');
+    const treatment=treatmentV27(t);
+    if(['Income','Debt Payment','Debt Payoff','Loan Payment','Payment / Transfer','Transfer'].includes(cat)) return false;
+    if(['Income','Ignore / Transfer','Sinking Fund Contribution','Reimbursement / Credit'].includes(treatment)) return false;
+    if(isFixedBillNameV27(cat)) return false;
+    if(isDebtNameV27(cat)) return false;
+    if(!isTrackedCategoryV27(cat)) return false;
+    return transactionSpendAmount(t) > 0;
+  }
+  function sortNewestV27(a,b){
+    const ad=String(a.date||''), bd=String(b.date||'');
+    if(ad!==bd) return bd.localeCompare(ad);
+    const ap=String(a.posted||''), bp=String(b.posted||'');
+    if(ap!==bp) return bp.localeCompare(ap);
+    return String(b.id||'').localeCompare(String(a.id||''));
+  }
+
+  window.renderPersonalView = function(owner,id,budgetName){
+    const budget=getBudget(budgetName);
+    const spent=txSpendByCategory(budgetName);
+    const rem=budget-spent;
+    const ownerTx=(app.transactions||[]).filter(t=>shouldShowSpendingDecisionV27(t, owner)).sort(sortNewestV27).slice(0,12);
+    document.getElementById(id).innerHTML = `<div class="metrics" style="grid-template-columns:1fr 1fr">
+      <div class="metric"><div class="label">${owner} personal left</div><div class="value ${rem<0?'bad':rem<50?'warn':'ok'}">${money(rem)}</div></div>
+      <div class="metric"><div class="label">${owner} personal spent</div><div class="value">${money(spent)}</div></div>
+    </div>
+    <h3>${owner} Spending Decisions</h3>
+    <table><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Budget Impact</th></tr>
+      ${ownerTx.map(t=>`<tr><td>${esc(t.date)}</td><td>${esc(t.description)}${t.purchasedBy?`<div class="tiny">${esc(t.purchasedBy)}</div>`:''}</td><td>${esc(t.category)}</td><td class="num">${money(transactionSpendAmount(t))}</td></tr>`).join('') || '<tr><td colspan="4">No spending decisions for this month.</td></tr>'}
+    </table><div class="tiny">Shows groceries, gas/auto, household, kids, personal, date-night, and sinking-fund spending. Excludes income, transfers, fixed bills, loan payments, and debt payments.</div>`;
+  };
+
+  window.renderDaily = function(){
+    const budgetRows=combinedMonthlyBudgetRowsV27();
+    const totalBudget=sum(budgetRows,b=>b.budget);
+    const totalSpent=sum(budgetRows,b=>txSpendByCategory(b.name));
+    const left=totalBudget-totalSpent;
+    const cash=cashflowRows();
+    const low=Math.min(...cash.map(r=>Number(r[3])||0));
+    const needs=(app.transactions||[]).filter(t=>currentMonthV27(t)&&t.category==='Needs Review').length;
+    const sinkingPosition=sum((app.sinkingFunds||[]), f=>sinkingFundPositionV27(f));
+    const latest=typeof latestSchwabTxV21==='function' ? latestSchwabTxV21() : null;
+
+    document.getElementById('topMetrics').innerHTML=[
+      ['Checking now',money(app.latestSchwabBalance),app.latestSchwabBalance<2500?'warn':'ok'],
+      ['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],
+      ['Sinking fund net',money(sinkingPosition),sinkingPosition<0?'bad':'ok'],
+      ['Needs review',needs,needs?'warn':'ok'],
+      ['Sheet sync','Connected','ok'],
+      ['Budget month',app.month||'', ''],
+      ['Current-month tx',(app.transactions||[]).filter(t=>currentMonthV27(t)).length,''],
+      ['Latest Schwab balance row', latest ? `${esc(latest.date)}<div class="tiny">${esc(latest.description||'')}</div>` : '—', '']
+    ].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]||''}">${m[1]}</div></div>`).join('');
+
+    renderPersonalView('Katy','katyView','Katy - Individual Priorities');
+    renderPersonalView('Joe','joeView','Joe - Individual Priorities');
+
+    let rows='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th><th>Progress</th></tr>';
+    budgetRows.forEach(b=>{
+      const spent=txSpendByCategory(b.name);
+      const rem=b.budget-spent;
+      const pct=b.budget?Math.min(100,Math.max(0,Math.round(spent/b.budget*100))):0;
+      const cls=rem<0?'bad':pct>80?'warn':'';
+      rows+=`<tr><td>${esc(b.friendly||b.name)}${b.source==='variable'?'<div class="tiny">Variable necessity</div>':''}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${rem<0?'bad':''}">${money(rem)}</td><td><div class="progress"><div class="bar ${cls}" style="width:${pct}%"></div></div><div class="tiny">${pct}%</div></td></tr>`;
+    });
+    document.getElementById('remainingTable').innerHTML=rows;
+
+    const review=(app.transactions||[]).filter(t=>currentMonthV27(t)&&t.category==='Needs Review');
+    document.getElementById('reviewTable').innerHTML=review.length?'<tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr>'+review.slice(0,10).map(t=>`<tr><td>${t.date}</td><td>${esc(t.description)}</td><td class="num">${money(t.amount)}</td></tr>`).join(''):'<tr><td>No transactions need review.</td></tr>';
+
+    const sinkRows=(app.sinkingFunds||[]).map(f=>{const spent=txSpendByCategory(f.name);const position=sinkingFundPositionV27(f);return {name:f.name,balance:f.balance,budget:f.budget,saved:f.saved,spent,position};}).sort((a,b)=>a.position-b.position);
+    document.getElementById('sinkingPositionTable').innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned</th><th class="num">Saved</th><th class="num">Spent</th><th class="num">Position</th></tr>'+sinkRows.map(f=>`<tr><td>${esc(f.name)}</td><td class="num">${money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(f.saved)}</td><td class="num">${money(f.spent)}</td><td class="num ${f.position<0?'bad':'ok'}">${money(f.position)}</td></tr>`).join('');
+
+    const upcoming=unpaidScheduledFuture().slice(0,12);
+    document.getElementById('upcomingTable').innerHTML='<tr><th>Date</th><th>Item</th><th>Bucket</th><th class="num">Left</th></tr>'+upcoming.map(x=>`<tr><td>${x.date}</td><td>${esc(x.name)}</td><td>${x.bucket}</td><td class="num">${money(x.left)}</td></tr>`).join('');
+    const confirmed=scheduledItems().map(x=>({...x,paid:paidForScheduled(x)})).filter(x=>x.paid>0);
+    document.getElementById('confirmedTable').innerHTML='<tr><th>Item</th><th>Bucket</th><th class="num">Scheduled</th><th class="num">Confirmed Paid</th></tr>'+confirmed.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.bucket}</td><td class="num">${money(x.amount)}</td><td class="num">${money(x.paid)}</td></tr>`).join('');
+  };
+
+  window.renderBudgets = function(){
+    const budgetRows=combinedMonthlyBudgetRowsV27();
+    document.getElementById('budgetTable').innerHTML='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th></tr>'+budgetRows.map(b=>{const spent=txSpendByCategory(b.name);return`<tr><td>${esc(b.name)}${b.source==='variable'?'<div class="tiny">Variable necessity from Bills tab</div>':''}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${(b.budget-spent)<0?'bad':''}">${money(b.budget-spent)}</td></tr>`}).join('');
+    document.getElementById('sinkingTable').innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned Monthly</th><th class="num">Saved This Month</th><th class="num">Spent This Month</th><th class="num">Current Position</th></tr>'+app.sinkingFunds.map(f=>{const spent=txSpendByCategory(f.name);const position=sinkingFundPositionV27(f);return `<tr><td>${esc(f.name)}</td><td class="num">${money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(f.saved)}</td><td class="num">${money(spent)}</td><td class="num ${position<0?'bad':'ok'}">${money(position)}</td></tr>`}).join('');
+  };
+
+  // Force transaction table to recalc Budget Impact with corrected function.
+  const oldRenderTransactionsV27 = window.renderTransactions;
+  window.renderTransactions = function(){
+    if(typeof oldRenderTransactionsV27 === 'function') oldRenderTransactionsV27();
+    // Existing renderer already calls transactionSpendAmount. This wrapper ensures post-patch recalculation after render.
+  };
+
+  try { if(typeof render === 'function') render(); } catch(e) { console.warn('v27 render skipped', e); }
+})();
+</script>
+
+
+<script>
+/* ===== v28: permanently disable full-page loading overlay =====
+   The site shell stays usable immediately. Only metrics/tables show placeholders while Sheet data loads.
+*/
+(function(){
+  function metricPlaceholdersV28(msg){
+    const top=document.getElementById('topMetrics');
+    if(top && !top.dataset.loaded){
+      top.innerHTML = [
+        'Checking now','Monthly spend left','Sinking fund net','Needs review',
+        'Sheet sync','Budget month','Current-month tx','Latest Schwab balance row'
+      ].map(label=>`<div class="metric"><div class="label">${label}</div><div class="value loading-value">${msg || 'Loading'}</div></div>`).join('');
+    }
+
+    const smallTables = [
+      ['remainingTable','Loading latest spending…'],
+      ['sinkingPositionTable','Loading latest sinking funds…'],
+      ['upcomingTable','Loading upcoming payments…'],
+      ['confirmedTable','Loading confirmed payments…']
+    ];
+    smallTables.forEach(([id,text])=>{
+      const el=document.getElementById(id);
+      if(el && !el.dataset.loaded) el.innerHTML = `<tr><td class="small">${text}</td></tr>`;
+    });
+  }
+
+  // Override old v23 functions if present.
+  window.showLoadingV23 = function(msg){
+    document.body.classList.remove('loading');
+    const overlay=document.getElementById('loadingOverlay');
+    if(overlay) overlay.style.display='none';
+    metricPlaceholdersV28(msg || 'Loading');
+  };
+
+  window.hideLoadingV23 = function(){
+    document.body.classList.remove('loading');
+    const overlay=document.getElementById('loadingOverlay');
+    if(overlay) overlay.style.display='none';
+  };
+
+  // Prevent any stale class from old inline code.
+  document.body.classList.remove('loading');
+  const overlay=document.getElementById('loadingOverlay');
+  if(overlay) overlay.remove();
+
+  // Mark tables as loaded after render functions populate them.
+  const oldRenderDaily = window.renderDaily;
+  if(typeof oldRenderDaily === 'function'){
+    window.renderDaily = function(){
+      const result = oldRenderDaily.apply(this, arguments);
+      ['topMetrics','remainingTable','sinkingPositionTable','upcomingTable','confirmedTable'].forEach(id=>{
+        const el=document.getElementById(id);
+        if(el) el.dataset.loaded='true';
+      });
+      document.body.classList.remove('loading');
+      return result;
+    };
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', () => metricPlaceholdersV28('Loading'), {once:true});
+  } else {
+    metricPlaceholdersV28('Loading');
+  }
 })();
 </script>
 
