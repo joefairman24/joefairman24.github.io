@@ -6,26 +6,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#f7f3ea;--card:#fffdf8;--ink:#263238;--muted:#667085;--line:#d0d5dd;--green:#dff4df;--pink:#f7dddd;--blue:#dbeafe;--cream:#fff7ed;--bad:#b42318;--warn:#b54708;--ok:#027a48;--dark:#263238}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--ink);font-size:16px}header{background:#fff8ed;border-bottom:2px solid #333;padding:14px;position:sticky;top:0;z-index:5}h1{margin:0;font-size:24px}h2{margin:0;padding:10px 12px;background:var(--green);border-bottom:1px solid #555;font-size:20px}h3{margin:16px 0 8px}.small{font-size:13px;color:var(--muted)}.tiny{font-size:12px;color:var(--muted)}nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}button{border:1px solid #667085;border-radius:8px;background:white;padding:9px 12px;font-weight:700;cursor:pointer}button.active{background:var(--dark);color:white}button.primary{background:var(--blue);color:#175cd3}button.danger{background:#fee4e2;color:#b42318}main{max-width:1500px;margin:auto;padding:14px}.panel{display:none}.panel.active{display:block}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.span12{grid-column:span 12}.span8{grid-column:span 8}.span6{grid-column:span 6}.span4{grid-column:span 4}.card{background:var(--card);border:1px solid #555;border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.05)}.card.pink h2{background:var(--pink)}.card.blue h2{background:var(--blue)}.section{padding:12px;overflow:auto}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{background:white;border:1px solid var(--line);border-radius:10px;padding:12px}.metric .label{font-size:13px;color:var(--muted)}.metric .value{font-size:24px;font-weight:800;margin-top:5px}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}table{width:100%;border-collapse:collapse;font-size:14px}th,td{border-bottom:1px solid #eaecf0;padding:8px;text-align:left;vertical-align:top}th{background:var(--cream);color:#9a6700;font-size:13px}.num{text-align:right;white-space:nowrap}.pill{display:inline-block;border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800}.pill.ok{background:#dcfae6;color:#05603a}.pill.warn{background:#fef0c7;color:#93370d}.pill.bad{background:#fee4e2;color:#912018}.progress{height:12px;background:#eaecf0;border-radius:999px;overflow:hidden}.bar{height:100%;background:#12b76a}.bar.warn{background:#f79009}.bar.bad{background:#d92d20}input,select{width:100%;padding:8px;border:1px solid #98a2b3;border-radius:8px;background:white;font-size:14px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}.notice{background:#fffaeb;border-left:5px solid #f79009;padding:10px;margin:8px 0}.katy-card{border:2px solid #175cd3}.joe-card{border:2px solid #027a48}@media(max-width:900px){.span4,.span6,.span8{grid-column:span 12}.metrics{grid-template-columns:1fr 1fr}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--ink);font-size:16px}header{background:#fff8ed;border-bottom:2px solid #333;padding:14px;position:sticky;top:0;z-index:5}h1{margin:0;font-size:24px}h2{margin:0;padding:10px 12px;background:var(--green);border-bottom:1px solid #555;font-size:20px}h3{margin:16px 0 8px}.small{font-size:13px;color:var(--muted)}.tiny{font-size:12px;color:var(--muted)}nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}button{border:1px solid #667085;border-radius:8px;background:white;padding:9px 12px;font-weight:700;cursor:pointer}button.active{background:var(--dark);color:white}button.primary{background:var(--blue);color:#175cd3}button.danger{background:#fee4e2;color:#b42318}button.saving{background:#fef0c7;color:#93370d;border-color:#f79009}button.saved{background:#dcfae6;color:#05603a;border-color:#12b76a}main{max-width:1500px;margin:auto;padding:14px}.panel{display:none}.panel.active{display:block}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.span12{grid-column:span 12}.span8{grid-column:span 8}.span6{grid-column:span 6}.span4{grid-column:span 4}.card{background:var(--card);border:1px solid #555;border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.05)}.card.pink h2{background:var(--pink)}.card.blue h2{background:var(--blue)}.section{padding:12px;overflow:auto}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{background:white;border:1px solid var(--line);border-radius:10px;padding:12px}.metric .label{font-size:13px;color:var(--muted)}.metric .value{font-size:24px;font-weight:800;margin-top:5px}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}table{width:100%;border-collapse:collapse;font-size:14px}th,td{border-bottom:1px solid #eaecf0;padding:8px;text-align:left;vertical-align:top}th{background:var(--cream);color:#9a6700;font-size:13px}.num{text-align:right;white-space:nowrap}.pill{display:inline-block;border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800}.pill.ok{background:#dcfae6;color:#05603a}.pill.warn{background:#fef0c7;color:#93370d}.pill.bad{background:#fee4e2;color:#912018}.progress{height:12px;background:#eaecf0;border-radius:999px;overflow:hidden}.bar{height:100%;background:#12b76a}.bar.warn{background:#f79009}.bar.bad{background:#d92d20}input,select{width:100%;padding:8px;border:1px solid #98a2b3;border-radius:8px;background:white;font-size:14px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}.notice{background:#fffaeb;border-left:5px solid #f79009;padding:10px;margin:8px 0}.katy-card{border:2px solid #175cd3}.joe-card{border:2px solid #027a48}@media(max-width:900px){.span4,.span6,.span8{grid-column:span 12}.metrics{grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body>
-<header><h1>Fairman Family Budget Dashboard v11</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+<header><h1>Fairman Family Budget Dashboard v13</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 <main>
 <section id="daily" class="panel active"><div class="grid"><div class="card blue span12"><h2>Today’s Snapshot</h2><div class="section"><div class="metrics" id="topMetrics"></div></div></div><div class="card blue span6 katy-card"><h2>Katy Daily View</h2><div class="section" id="katyView"></div></div><div class="card blue span6 joe-card"><h2>Joe Daily View</h2><div class="section" id="joeView"></div></div><div class="card span8"><h2>What’s Left This Month</h2><div class="section"><div class="small">Only transactions dated in the selected budget month are counted here. Prior-month uploads are ignored for June spending.</div><table id="remainingTable"></table></div></div><div class="card pink span4"><h2>Needs Review</h2><div class="section"><table id="reviewTable"></table></div></div><div class="card span6"><h2>Sinking Fund Positions</h2><div class="section"><table id="sinkingPositionTable"></table></div></div><div class="card span6"><h2>Upcoming Scheduled Money Out</h2><div class="section"><table id="upcomingTable"></table></div></div><div class="card pink span6"><h2>Confirmed Payments</h2><div class="section"><table id="confirmedTable"></table></div></div></div></section>
 <section id="transactions" class="panel"><div class="card"><h2>Transactions</h2><div class="section"><div class="toolbar"><select id="filterOwner"><option value="">All owners</option><option>Joe</option><option>Katy</option><option>Shared/Unknown</option></select><select id="filterCategory"><option value="">All categories</option></select><input id="searchTx" placeholder="Search"><button id="saveChanges" class="primary">Save Changes</button></div><table id="txTable"></table></div></div></section>
 <section id="cashflow" class="panel"><div class="card"><h2>Checking Cash Flow Forecast</h2><div class="section"><div class="notice">Past spending is already reflected in the latest Schwab balance. Future cash flow only includes future paychecks and unpaid scheduled payments.</div><table id="cashflowTable"></table></div></div></section>
 <section id="budgets" class="panel"><div class="grid"><div class="card span6"><h2>Monthly Spending Budgets</h2><div class="section"><table id="budgetTable"></table></div></div><div class="card span6"><h2>Sinking Funds</h2><div class="section"><table id="sinkingTable"></table></div></div></div></section>
 <section id="debts" class="panel"><div class="grid"><div class="card pink span6"><h2>Credit Cards</h2><div class="section"><table id="ccTable"></table></div></div><div class="card pink span6"><h2>Loans</h2><div class="section"><table id="loanTable"></table></div></div><div class="card span12"><h2>Bills / Necessities</h2><div class="section"><div class="small">Mortgage and HELOC live under Loans. Groceries/gas/dog food/health are monthly spending budgets, not scheduled bills.</div><table id="billTable"></table></div></div></div></section>
-<section id="import" class="panel"><div class="card"><h2>Upload New Transactions</h2><div class="section"><div class="notice">Supports Apple Card and Charles Schwab exports. After upload, review categories in Transactions and click Save Changes. For shared saving, connect this page to the Google Apps Script web app for your budget spreadsheet.</div>
+<section id="import" class="panel"><div class="card"><h2>Upload New Transactions</h2><div class="section"><div class="notice">Supports Apple Card and Charles Schwab exports. After upload, transactions now autosync to Google Sheets when imported or when categories/owners are changed. The Save Changes and Push buttons are still there as manual backups.</div>
 <div class="notice"><b>Google Sheets Sync</b><br>
 <div class="toolbar" style="margin-top:8px">
 <input id="apiUrl" placeholder="Paste Google Apps Script Web App URL here" style="min-width:420px">
 <button id="saveApiUrl" class="primary">Save API URL</button>
 <button id="loadSheet" class="primary">Load From Sheet</button>
-<button id="pushSheet" class="primary">Push Transactions To Sheet</button>
+<button id="pushSheet" class="primary">Push Now</button><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="autoSyncToggle" checked style="width:auto"> Auto-sync changes</label>
 </div>
-<div id="syncStatus" class="small">Not connected yet.</div>
+<div id="syncStatus" class="small">Not connected yet.</div><div id="lastSyncStatus" class="tiny"></div>
 </div>
 <input type="file" id="fileInput" accept=".csv" multiple><button id="importBtn" class="primary">Import CSV File(s)</button><button id="backupBtn">Export Backup JSON</button><button id="resetBtn" class="danger">Reset</button></div></div></section>
 </main>
@@ -58,6 +58,8 @@ function txSpendByCategory(cat){
   return sum(app.transactions.filter(t=>t.category===cat),t=>transactionSpendAmount(t));
 }
  function getBudget(name){return app.spendingBudgets.find(b=>b.name===name)?.budget||0}
+function sinkingFundPosition(f){return (Number(f.balance)||0)+(Number(f.saved)||0)-txSpendByCategory(f.name)}
+function sinkingFundProjectedPosition(f){return (Number(f.balance)||0)+(Number(f.budget)||0)-txSpendByCategory(f.name)}
 function paidForScheduled(x){if(x.kind==='bill')return app.paidBills[x.name]||0;if(x.kind==='card')return app.paidCards[x.name]||0;if(x.kind==='loan')return app.paidLoans[x.name]||0;return 0}
 function scheduledItems(){return [...app.bills.map(b=>({kind:'bill',name:b.name,amount:b.amount,due:b.due,bucket:'Bills'})),...app.creditCards.map(c=>({kind:'card',name:c.name,amount:c.min,due:c.due,bucket:'Credit Cards'})),...app.loans.map(l=>({kind:'loan',name:l.name,amount:l.min,due:l.due,bucket:'Loans'}))].filter(x=>Number(x.amount)>0)}
 function unpaidScheduledFuture(){return scheduledItems().map(x=>({...x,paid:paidForScheduled(x),left:Math.max(0,x.amount-paidForScheduled(x)),date:dateFromDay(x.due)})).filter(x=>x.left>0&&x.date>=today()).sort((a,b)=>a.date.localeCompare(b.date))}
@@ -65,19 +67,19 @@ function cashflowRows(){let bal=Number(app.latestSchwabBalance)||0;const rows=[[
 function render(){save();renderSelectors();renderDaily();renderTransactions();renderCashflow();renderBudgets();renderDebts()}
 function renderSelectors(){const opts=categories().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');const fc=document.getElementById('filterCategory');const cur=fc.value;fc.innerHTML='<option value="">All categories</option>'+opts;fc.value=cur}
 function renderDaily(){const totalBudget=sum(app.spendingBudgets,b=>b.budget);const totalSpent=sum(app.transactions.filter(t=>inBudgetMonth(t)&&transactionSpendAmount(t)>0&&app.spendingBudgets.some(b=>b.name===t.category)),t=>t.amount);const left=totalBudget-totalSpent;const cash=cashflowRows();const low=Math.min(...cash.map(r=>Number(r[3])||0));const needs=app.transactions.filter(t=>inBudgetMonth(t)&&t.category==='Needs Review').length;
-const sinkingPosition=sum(app.sinkingFunds,f=>(Number(f.balance)||0)+(Number(f.budget)||0)-txSpendByCategory(f.name));
-document.getElementById('topMetrics').innerHTML=[['Checking now',money(app.latestSchwabBalance),app.latestSchwabBalance<2500?'warn':'ok'],['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],['Sinking fund net',money(sinkingPosition),sinkingPosition<0?'bad':sinkingPosition<500?'warn':'ok'],['Needs review',needs,needs?'warn':'ok']].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]}">${m[1]}</div></div>`).join('');
+const sinkingPosition=sum(app.sinkingFunds,f=>sinkingFundPosition(f));
+document.getElementById('topMetrics').innerHTML=[['Checking now',money(app.latestSchwabBalance),app.latestSchwabBalance<2500?'warn':'ok'],['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],['Sinking fund net',money(sinkingPosition),sinkingPosition<0?'bad':'ok'],['Needs review',needs,needs?'warn':'ok']].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]}">${m[1]}</div></div>`).join('');
 renderPersonalView('Katy','katyView','Katy - Individual Priorities');renderPersonalView('Joe','joeView','Joe - Individual Priorities');
 let rows='<tr><th>Category</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Left</th><th>Progress</th></tr>';app.spendingBudgets.forEach(b=>{const spent=txSpendByCategory(b.name);const rem=b.budget-spent;const pct=b.budget?Math.min(100,Math.round(spent/b.budget*100)):0;const cls=rem<0?'bad':pct>80?'warn':'';rows+=`<tr><td>${esc(b.friendly||b.name)}</td><td class="num">${money(b.budget)}</td><td class="num">${money(spent)}</td><td class="num ${rem<0?'bad':''}">${money(rem)}</td><td><div class="progress"><div class="bar ${cls}" style="width:${pct}%"></div></div><div class="tiny">${pct}%</div></td></tr>`});document.getElementById('remainingTable').innerHTML=rows;
 const review=app.transactions.filter(t=>inBudgetMonth(t)&&t.category==='Needs Review');document.getElementById('reviewTable').innerHTML=review.length?'<tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr>'+review.map(t=>`<tr><td>${t.date}</td><td>${esc(t.description)}</td><td class="num">${money(t.amount)}</td></tr>`).join(''):'<tr><td>No transactions need review.</td></tr>';
-const sinkRows=app.sinkingFunds.map(f=>{const spent=txSpendByCategory(f.name);const position=(Number(f.balance)||0)+(Number(f.budget)||0)-spent;return {name:f.name,balance:f.balance,budget:f.budget,spent,position};}).sort((a,b)=>a.position-b.position);
-document.getElementById('sinkingPositionTable').innerHTML='<tr><th>Fund</th><th class="num">Contribution</th><th class="num">Spent</th><th class="num">Position</th></tr>'+sinkRows.map(f=>`<tr><td>${esc(f.name)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(f.spent)}</td><td class="num ${f.position<0?'bad':f.position<100?'warn':'ok'}">${money(f.position)}</td></tr>`).join('');
+const sinkRows=app.sinkingFunds.map(f=>{const spent=txSpendByCategory(f.name);const position=sinkingFundPosition(f);return {name:f.name,balance:f.balance,budget:f.budget,saved:f.saved,spent,position};}).sort((a,b)=>a.position-b.position);
+document.getElementById('sinkingPositionTable').innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Saved</th><th class="num">Spent</th><th class="num">Position</th></tr>'+sinkRows.map(f=>`<tr><td>${esc(f.name)}<div class="tiny">Planned monthly: ${money(f.budget)}</div></td><td class="num">${money(f.balance)}</td><td class="num">${money(f.saved)}</td><td class="num">${money(f.spent)}</td><td class="num ${f.position<0?'bad':'ok'}">${money(f.position)}</td></tr>`).join('');
 const upcoming=unpaidScheduledFuture().slice(0,12);document.getElementById('upcomingTable').innerHTML='<tr><th>Date</th><th>Item</th><th>Bucket</th><th class="num">Left</th></tr>'+upcoming.map(x=>`<tr><td>${x.date}</td><td>${esc(x.name)}</td><td>${x.bucket}</td><td class="num">${money(x.left)}</td></tr>`).join('');
 const confirmed=scheduledItems().map(x=>({...x,paid:paidForScheduled(x)})).filter(x=>x.paid>0);document.getElementById('confirmedTable').innerHTML='<tr><th>Item</th><th>Bucket</th><th class="num">Scheduled</th><th class="num">Confirmed Paid</th></tr>'+confirmed.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.bucket}</td><td class="num">${money(x.amount)}</td><td class="num">${money(x.paid)}</td></tr>`).join('')}
 function renderPersonalView(owner,id,budgetName){const budget=getBudget(budgetName);const spent=txSpendByCategory(budgetName);const rem=budget-spent;const ownerTx=app.transactions.filter(t=>inBudgetMonth(t)&&transactionSpendAmount(t)>0&&(t.owner===owner||t.category===budgetName)).slice(0,6);document.getElementById(id).innerHTML=`<div class="metrics" style="grid-template-columns:1fr 1fr"><div class="metric"><div class="label">${owner} personal left</div><div class="value ${rem<0?'bad':rem<50?'warn':'ok'}">${money(rem)}</div></div><div class="metric"><div class="label">${owner} personal spent</div><div class="value">${money(spent)}</div></div></div><h3>Recent ${owner} purchases</h3><table><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr>${ownerTx.map(t=>`<tr><td>${t.date}</td><td>${esc(t.description)}</td><td>${esc(t.category)}</td><td class="num">${money(transactionSpendAmount(t)||t.amount)}</td></tr>`).join('')||'<tr><td colspan="4">None yet.</td></tr>'}</table>`}
 function renderTransactions(){const ownerFilter=document.getElementById('filterOwner').value;const catFilter=document.getElementById('filterCategory').value;const q=document.getElementById('searchTx').value.toLowerCase();let list=app.transactions.filter(t=>{const owner=t.owner||'Shared/Unknown';return(!ownerFilter||owner===ownerFilter)&&(!catFilter||t.category===catFilter)&&(!q||(t.description+' '+t.rawDescription).toLowerCase().includes(q))}).sort((a,b)=>b.date.localeCompare(a.date));const catOpts=categories().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');let rows='<tr><th>Date</th><th>Source</th><th>Owner</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr>';list.forEach(t=>{const ownerSel=`<select data-owner="${t.id}"><option ${!t.owner?'selected':''}>Shared/Unknown</option><option ${t.owner==='Joe'?'selected':''}>Joe</option><option ${t.owner==='Katy'?'selected':''}>Katy</option></select>`;const catSel=`<select data-cat="${t.id}">${catOpts}</select>`;rows+=`<tr><td>${t.date}</td><td>${esc(t.source)}</td><td>${ownerSel}</td><td><b>${esc(t.description)}</b><div class="tiny">${esc(t.purchasedBy||'')}</div></td><td>${catSel}</td><td class="num">${money(t.amount)}</td></tr>`});document.getElementById('txTable').innerHTML=rows;document.querySelectorAll('[data-cat]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.cat);if(t)sel.value=t.category})}
 function renderCashflow(){let rows='<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>';cashflowRows().forEach(r=>{const cls=r[4]==='Negative'?'bad':r[4]==='Low'?'warn':'ok';rows+=`<tr><td>${r[0]}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${r[4]}</span></td></tr>`});document.getElementById('cashflowTable').innerHTML=rows}
-function renderBudgets(){document.getElementById('budgetTable').innerHTML='<tr><th>Category</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Left</th></tr>'+app.spendingBudgets.map(b=>{const spent=txSpendByCategory(b.name);return`<tr><td>${esc(b.name)}</td><td class="num">${money(b.budget)}</td><td class="num">${money(spent)}</td><td class="num">${money(b.budget-spent)}</td></tr>`}).join('');document.getElementById('sinkingTable').innerHTML='<tr><th>Fund</th><th class="num">Starting Balance</th><th class="num">Monthly Contribution</th><th class="num">Spent This Month</th><th class="num">Current Position</th></tr>'+app.sinkingFunds.map(f=>{const spent=txSpendByCategory(f.name);const position=(Number(f.balance)||0)+(Number(f.budget)||0)-spent;return `<tr><td>${esc(f.name)}</td><td class="num">${money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(spent)}</td><td class="num ${position<0?'bad':position<100?'warn':'ok'}">${money(position)}</td></tr>`}).join('')}
+function renderBudgets(){document.getElementById('budgetTable').innerHTML='<tr><th>Category</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Left</th></tr>'+app.spendingBudgets.map(b=>{const spent=txSpendByCategory(b.name);return`<tr><td>${esc(b.name)}</td><td class="num">${money(b.budget)}</td><td class="num">${money(spent)}</td><td class="num">${money(b.budget-spent)}</td></tr>`}).join('');document.getElementById('sinkingTable').innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned Monthly</th><th class="num">Saved This Month</th><th class="num">Spent This Month</th><th class="num">Current Position</th></tr>'+app.sinkingFunds.map(f=>{const spent=txSpendByCategory(f.name);const position=sinkingFundPosition(f);return `<tr><td>${esc(f.name)}</td><td class="num">${money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(f.saved)}</td><td class="num">${money(spent)}</td><td class="num ${position<0?'bad':'ok'}">${money(position)}</td></tr>`}).join('')}
 function renderDebts(){document.getElementById('ccTable').innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Min</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+app.creditCards.map(c=>`<tr><td>${esc(c.name)}</td><td class="num">${money(c.owed)}</td><td class="num">${money(c.min)}</td><td class="num">${money(app.paidCards[c.name]||0)}</td><td>${c.due}</td><td class="num">${Number(c.apr).toFixed(2)}%</td></tr>`).join('');document.getElementById('loanTable').innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Payment</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+app.loans.map(l=>`<tr><td>${esc(l.name)}</td><td class="num">${money(l.owed)}</td><td class="num">${money(l.min)}</td><td class="num">${money(app.paidLoans[l.name]||0)}</td><td>${l.due}</td><td class="num">${Number(l.apr).toFixed(2)}%</td></tr>`).join('');document.getElementById('billTable').innerHTML='<tr><th>Name</th><th class="num">Budget</th><th class="num">Confirmed Paid</th><th>Due</th></tr>'+app.bills.map(b=>`<tr><td>${esc(b.name)}</td><td class="num">${money(b.amount)}</td><td class="num">${money(app.paidBills[b.name]||0)}</td><td>${b.due}</td></tr>`).join('')}
 function saveTransactionEdits(){document.querySelectorAll('[data-cat]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.cat);if(t)t.category=sel.value});document.querySelectorAll('[data-owner]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.owner);if(t)t.owner=sel.value==='Shared/Unknown'?'':sel.value});render()}
 function exportBackup(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(app,null,2)],{type:'application/json'}));a.download='fairman-budget-backup-v7.json';a.click()}
@@ -151,10 +153,56 @@ function parseCsvText(text){
   if(row.length||cell){ row.push(cell); rows.push(row); }
   return rows;
 }
+function normalizeHeader(value){
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_()$.-]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
 function findHeaderIndex(headers, names){
-  const lower=headers.map(h=>String(h).trim().toLowerCase());
-  for(const n of names){ const i=lower.indexOf(n); if(i>=0) return i; }
+  const normalized = headers.map(normalizeHeader);
+  const wanted = names.map(normalizeHeader);
+  // First try exact normalized match.
+  for(const n of wanted){
+    const i = normalized.indexOf(n);
+    if(i >= 0) return i;
+  }
+  // Then try contains match. This fixes Apple Card headers like “Amount (USD)”.
+  for(const n of wanted){
+    const i = normalized.findIndex(h => h === n || h.includes(n) || n.includes(h));
+    if(i >= 0) return i;
+  }
   return -1;
+}
+function normalizeDate(value){
+  const raw = String(value || '').trim();
+  if(!raw) return app.today;
+  // Already ISO-ish: 2026-06-04 or 2026/06/04
+  let m = raw.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+  // Common bank exports: 6/4/2026 or 06/04/26
+  m = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+  if(m){
+    let year = m[3].length === 2 ? '20' + m[3] : m[3];
+    return `${year}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+  }
+  const d = new Date(raw);
+  if(!Number.isNaN(d.getTime())){
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  return raw;
+}
+function parseMoney(value){
+  let s = String(value ?? '').trim();
+  if(!s) return 0;
+  // Convert accounting negatives like ($12.34), and strip currency/commas.
+  const negative = /^\(.*\)$/.test(s);
+  s = s.replace(/[,$]/g,'').replace(/[()]/g,'').replace(/−/g,'-');
+  const n = Number(s);
+  if(Number.isNaN(n)) return 0;
+  return negative ? -Math.abs(n) : n;
 }
 function applyRules(desc){
   const d=String(desc||'').toUpperCase();
@@ -163,52 +211,80 @@ function applyRules(desc){
   }
   return {category:'Needs Review', owner:''};
 }
+function inferSource(fileName, headers){
+  const name = String(fileName || '').toLowerCase();
+  const h = headers.map(normalizeHeader).join('|');
+  if(name.includes('apple') || h.includes('purchased by') || h.includes('clearing date') || h.includes('amount usd')) return 'Apple Card';
+  if(name.includes('schwab') || h.includes('running balance') || h.includes('withdrawal') || h.includes('deposit')) return 'Schwab';
+  return 'Imported';
+}
+function buildTransactionFromRow(row, headers, fileName){
+  const dateI=findHeaderIndex(headers,['transaction date','date']);
+  const postI=findHeaderIndex(headers,['posted date','post date','posted','clearing date']);
+  const descI=findHeaderIndex(headers,['description','merchant','name','memo','payee']);
+  const merchantI=findHeaderIndex(headers,['merchant','merchant name']);
+  const amountI=findHeaderIndex(headers,['amount usd','amount']);
+  const debitI=findHeaderIndex(headers,['debit','withdrawal','withdrawals']);
+  const creditI=findHeaderIndex(headers,['credit','deposit','deposits']);
+  const accountI=findHeaderIndex(headers,['account','account name']);
+  const purchasedByI=findHeaderIndex(headers,['purchased by','card member','cardmember']);
+  const runningBalanceI=findHeaderIndex(headers,['running balance','balance']);
+
+  const source = inferSource(fileName, headers);
+  const merchant = merchantI >= 0 ? row[merchantI] : '';
+  const desc = (merchant || (descI >= 0 ? row[descI] : '') || 'Imported transaction').trim();
+  const rawDesc = [descI >= 0 ? row[descI] : '', merchant].filter(Boolean).join(' | ') || desc;
+
+  let amt=0;
+  if(amountI>=0) amt=parseMoney(row[amountI]);
+  else {
+    const debit=debitI>=0 ? parseMoney(row[debitI]) : 0;
+    const credit=creditI>=0 ? parseMoney(row[creditI]) : 0;
+    if(credit) amt = Math.abs(credit);
+    else if(debit) amt = -Math.abs(debit);
+  }
+  if(!amt) return null;
+
+  const rule=applyRules(rawDesc || desc);
+  return {
+    id:'imp-'+Date.now()+'-'+Math.random().toString(36).slice(2),
+    date:normalizeDate(dateI>=0 ? row[dateI] : app.today),
+    posted:postI>=0 ? normalizeDate(row[postI]) : '',
+    source,
+    account:accountI>=0 && row[accountI] ? row[accountI] : source,
+    description:desc,
+    rawDescription:rawDesc,
+    amount:amt,
+    owner:rule.owner,
+    purchasedBy:purchasedByI>=0 ? row[purchasedByI] : '',
+    category:rule.category,
+    runningBalance:runningBalanceI>=0 ? parseMoney(row[runningBalanceI]) : undefined
+  };
+}
+function isDuplicateTransaction(tx){
+  const key = x => [x.date, x.source, String(x.description||'').toUpperCase(), Number(x.amount||0).toFixed(2)].join('|');
+  const txKey = key(tx);
+  return app.transactions.some(existing => key(existing) === txKey);
+}
 async function importCsvFiles(){
   const files=[...(document.getElementById('fileInput')?.files||[])];
   if(!files.length){ alert('Choose one or more CSV files first.'); return; }
-  let imported=0;
+  let imported=0, skipped=0, duplicates=0;
   for(const file of files){
     const text=await file.text();
     const rows=parseCsvText(text).filter(r=>r.some(c=>String(c).trim()));
     if(rows.length<2) continue;
-    const h=rows.shift();
-    const dateI=findHeaderIndex(h,['date','transaction date','posted date']);
-    const postI=findHeaderIndex(h,['posted','posted date','post date']);
-    const descI=findHeaderIndex(h,['description','merchant','name','memo','payee']);
-    const amountI=findHeaderIndex(h,['amount']);
-    const debitI=findHeaderIndex(h,['debit','withdrawal']);
-    const creditI=findHeaderIndex(h,['credit','deposit']);
-    const accountI=findHeaderIndex(h,['account','account name']);
-    const source = file.name.toLowerCase().includes('apple') ? 'Apple Card' : file.name.toLowerCase().includes('schwab') ? 'Schwab' : 'Imported';
-    for(const r of rows){
-      const desc = r[descI] || 'Imported transaction';
-      let amt=0;
-      if(amountI>=0) amt=Number(String(r[amountI]).replace(/[$,]/g,''));
-      else {
-        const debit=debitI>=0?Number(String(r[debitI]).replace(/[$,]/g,'')):0;
-        const credit=creditI>=0?Number(String(r[creditI]).replace(/[$,]/g,'')):0;
-        amt = credit ? Math.abs(credit) : -Math.abs(debit);
-      }
-      if(!amt) continue;
-      const rule=applyRules(desc);
-      app.transactions.push({
-        id:'imp-'+Date.now()+'-'+Math.random().toString(36).slice(2),
-        date:r[dateI] || app.today,
-        posted:postI>=0?r[postI]:'',
-        source,
-        account:accountI>=0?r[accountI]:source,
-        description:desc,
-        rawDescription:desc,
-        amount:amt,
-        owner:rule.owner,
-        purchasedBy:'',
-        category:rule.category
-      });
+    const headers=rows.shift();
+    for(const row of rows){
+      const tx = buildTransactionFromRow(row, headers, file.name);
+      if(!tx){ skipped++; continue; }
+      if(isDuplicateTransaction(tx)){ duplicates++; continue; }
+      app.transactions.push(tx);
       imported++;
     }
   }
   render();
-  setSyncStatus('Imported ' + imported + ' transactions locally. Review categories, then Push Transactions To Sheet.', 'ok');
+  setSyncStatus(`Imported ${imported} transaction(s) locally. Skipped ${skipped}; duplicates ${duplicates}. Review categories, then Push Transactions To Sheet.`, 'ok');
 }
 
 // Attach sync/import listeners after original script setup.
@@ -222,5 +298,338 @@ setTimeout(()=>{
   document.getElementById('pushSheet')?.addEventListener('click', pushTransactionsToSheet);
   document.getElementById('importBtn')?.addEventListener('click', importCsvFiles);
 },0);
+
+/* ===== Autosync layer v13 ===== */
+const AUTO_SYNC_ENABLED_KEY = 'fairman-budget-autosync-enabled';
+let autoSyncTimer = null;
+let autoSyncDirty = false;
+let autoSyncInFlight = false;
+let autoSyncQueuedAgain = false;
+let lastSyncStartedAt = 0;
+
+function isAutoSyncEnabled(){
+  const stored = localStorage.getItem(AUTO_SYNC_ENABLED_KEY);
+  return stored === null ? true : stored === 'true';
+}
+function setLastSyncStatus(message, kind=''){
+  const el = document.getElementById('lastSyncStatus');
+  if(!el) return;
+  el.textContent = message;
+  el.className = 'tiny ' + kind;
+}
+function setSaveButtonState(state, text){
+  const btn = document.getElementById('saveChanges');
+  if(!btn) return;
+  btn.classList.remove('saving','saved','danger');
+  if(state) btn.classList.add(state);
+  btn.textContent = text || 'Save Changes';
+}
+function flashSaveButtonSaved(){
+  setSaveButtonState('saved','Saved ✓');
+  setTimeout(()=>setSaveButtonState('', 'Save Changes'), 1800);
+}
+function updateAutoSyncToggle(){
+  const toggle = document.getElementById('autoSyncToggle');
+  if(toggle) toggle.checked = isAutoSyncEnabled();
+}
+function captureVisibleTransactionEdits(){
+  document.querySelectorAll('[data-cat]').forEach(sel=>{
+    const t=app.transactions.find(x=>x.id===sel.dataset.cat);
+    if(t) t.category=sel.value;
+  });
+  document.querySelectorAll('[data-owner]').forEach(sel=>{
+    const t=app.transactions.find(x=>x.id===sel.dataset.owner);
+    if(t) t.owner=sel.value==='Shared/Unknown'?'':sel.value;
+  });
+  save();
+}
+function queueAutoSync(reason='change'){
+  captureVisibleTransactionEdits();
+  autoSyncDirty = true;
+  if(!getApiUrl()){
+    setSyncStatus('Saved locally. Add your Apps Script URL to enable auto-sync.', 'warn');
+    flashSaveButtonSaved();
+    return;
+  }
+  if(!isAutoSyncEnabled()){
+    setSyncStatus('Saved locally. Auto-sync is off; use Push Now when ready.', 'warn');
+    flashSaveButtonSaved();
+    return;
+  }
+  clearTimeout(autoSyncTimer);
+  setSyncStatus('Saved locally. Auto-sync queued: ' + reason, 'warn');
+  setSaveButtonState('saving','Saving…');
+  autoSyncTimer = setTimeout(()=>autoPushAllToSheet(reason), 1400);
+}
+async function autoPushAllToSheet(reason='change'){
+  if(!autoSyncDirty || !isAutoSyncEnabled() || !getApiUrl()) return;
+  if(autoSyncInFlight){
+    autoSyncQueuedAgain = true;
+    return;
+  }
+  autoSyncInFlight = true;
+  autoSyncDirty = false;
+  lastSyncStartedAt = Date.now();
+  try{
+    captureVisibleTransactionEdits();
+    setSaveButtonState('saving','Saving…');
+    setSyncStatus('Auto-syncing to Google Sheets...', 'warn');
+    const json = await callSheetApi({action:'saveAll', app});
+    const count = json.count ?? (app.transactions || []).length;
+    const time = new Date().toLocaleTimeString();
+    setSyncStatus('Auto-synced ' + count + ' transaction(s) at ' + time, 'ok');
+    flashSaveButtonSaved();
+    setLastSyncStatus('Last auto-sync: ' + time + ' after ' + reason, 'ok');
+  }catch(err){
+    console.error(err);
+    autoSyncDirty = true;
+    setSaveButtonState('danger','Save Failed');
+    setSyncStatus('Auto-sync failed: ' + err.message + ' — saved locally, try Push Now.', 'bad');
+    setLastSyncStatus('Last auto-sync failed at ' + new Date().toLocaleTimeString(), 'bad');
+  }finally{
+    autoSyncInFlight = false;
+    if(autoSyncQueuedAgain){
+      autoSyncQueuedAgain = false;
+      queueAutoSync('queued changes');
+    }
+  }
+}
+
+// Override manual save/push/import functions so they also trigger/reflect autosync.
+const originalSaveTransactionEdits_v13 = saveTransactionEdits;
+saveTransactionEdits = function(){
+  originalSaveTransactionEdits_v13();
+  queueAutoSync('transaction edits');
+};
+
+const originalPushTransactionsToSheet_v13 = pushTransactionsToSheet;
+pushTransactionsToSheet = async function(){
+  try{
+    captureVisibleTransactionEdits();
+    setSyncStatus('Pushing all current data to Google Sheet...', 'warn');
+    const json = await callSheetApi({action:'saveAll', app});
+    autoSyncDirty = false;
+    setSyncStatus('Pushed ' + (json.count ?? app.transactions.length) + ' transaction(s) to Google Sheets at ' + new Date().toLocaleTimeString(), 'ok');
+    flashSaveButtonSaved();
+  }catch(err){
+    console.error(err);
+    setSyncStatus('Push failed: ' + err.message, 'bad');
+    alert('Push failed: ' + err.message);
+  }
+};
+
+const originalImportCsvFiles_v13 = importCsvFiles;
+importCsvFiles = async function(){
+  const before = (app.transactions || []).length;
+  await originalImportCsvFiles_v13();
+  const after = (app.transactions || []).length;
+  if(after !== before) queueAutoSync('CSV import');
+};
+
+// Make category/owner dropdown changes save immediately, without needing Save Changes.
+document.addEventListener('change', (e)=>{
+  const target = e.target;
+  if(target && (target.matches('[data-cat]') || target.matches('[data-owner]'))){
+    captureVisibleTransactionEdits();
+    renderDaily();
+    renderBudgets();
+    renderCashflow();
+    renderDebts();
+    queueAutoSync('category/owner update');
+  }
+});
+
+window.addEventListener('beforeunload', (e)=>{
+  if(autoSyncDirty || autoSyncInFlight){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+setTimeout(()=>{
+  updateAutoSyncToggle();
+  const toggle = document.getElementById('autoSyncToggle');
+  if(toggle){
+    toggle.addEventListener('change', ()=>{
+      localStorage.setItem(AUTO_SYNC_ENABLED_KEY, String(toggle.checked));
+      setSyncStatus(toggle.checked ? 'Auto-sync enabled.' : 'Auto-sync disabled. Use Push Now for manual saves.', toggle.checked ? 'ok' : 'warn');
+      if(toggle.checked && autoSyncDirty) queueAutoSync('auto-sync re-enabled');
+    });
+  }
+  if(getApiUrl() && isAutoSyncEnabled()) setLastSyncStatus('Auto-sync is on. Changes will push to Google Sheets automatically.', 'ok');
+}, 0);
+
 </script>
+
+<script>
+/* ===== v15: positive transaction / reimbursement / sinking-fund contribution handling =====
+Treatment choices:
+- Auto: infer from source/sign
+- Expense: counts against the selected budget/fund
+- Reimbursement / Credit: reduces spending in the selected budget/fund
+- Sinking Fund Contribution: increases saved amount for the selected fund, does not count as spending
+- Ignore / Transfer: ignored for budget calculations
+*/
+
+function isSinkingFundCategory(cat){
+  return app.sinkingFunds.some(f=>f.name===cat);
+}
+function isBudgetCategory(cat){
+  return app.spendingBudgets.some(b=>b.name===cat);
+}
+function transactionTreatment(t){
+  return t.treatment || t.type || 'Auto';
+}
+function inferredImpactFromSignAndSource(t){
+  const amount = Number(t.amount)||0;
+  const src = String(t.source || t.account || '').toLowerCase();
+  // Apple Card exports purchases as positive charges and credits/payments as negative.
+  if(src.includes('apple card') || src.includes('applecard')){
+    return amount;
+  }
+  // Checking/bank exports spending as negative withdrawals and refunds/income as positive deposits.
+  return -amount;
+}
+function transactionSpendAmount(t){
+  if(!inBudgetMonth(t)) return 0;
+  if(isPaymentCategory(t.category)) return 0;
+  if(!isTrackedSpendingCategory(t.category)) return 0;
+
+  const treatment = transactionTreatment(t);
+  const amount = Number(t.amount)||0;
+
+  if(treatment === 'Ignore / Transfer' || treatment === 'Income') return 0;
+  if(treatment === 'Sinking Fund Contribution') return 0;
+  if(treatment === 'Expense') return Math.abs(amount);
+  if(treatment === 'Reimbursement / Credit') return -Math.abs(amount);
+
+  // Auto mode:
+  // Apple positive charge = spend; Apple negative credit = refund.
+  // Bank negative withdrawal = spend; Bank positive deposit = refund/reimbursement.
+  return inferredImpactFromSignAndSource(t);
+}
+function sinkingFundContributionAmount(fundName){
+  return sum(app.transactions.filter(t =>
+    inBudgetMonth(t) &&
+    t.category === fundName &&
+    transactionTreatment(t) === 'Sinking Fund Contribution'
+  ), t => Math.abs(Number(t.amount)||0));
+}
+function txSpendByCategory(cat){
+  return sum(app.transactions.filter(t=>t.category===cat),t=>transactionSpendAmount(t));
+}
+function sinkingFundPosition(f){
+  return (Number(f.balance)||0) + (Number(f.saved)||0) + sinkingFundContributionAmount(f.name) - txSpendByCategory(f.name);
+}
+function sinkingFundProjectedPosition(f){
+  return (Number(f.balance)||0) + (Number(f.budget)||0) + sinkingFundContributionAmount(f.name) - txSpendByCategory(f.name);
+}
+function treatmentOptions(selected){
+  const opts = ['Auto','Expense','Reimbursement / Credit','Sinking Fund Contribution','Ignore / Transfer','Income'];
+  return opts.map(o=>`<option value="${esc(o)}" ${selected===o?'selected':''}>${esc(o)}</option>`).join('');
+}
+
+// Override transaction table so every row can be given a Treatment.
+renderTransactions = function(){
+  const ownerFilter=document.getElementById('filterOwner').value;
+  const catFilter=document.getElementById('filterCategory').value;
+  const q=document.getElementById('searchTx').value.toLowerCase();
+  let list=app.transactions.filter(t=>{
+    const owner=t.owner||'Shared/Unknown';
+    return(!ownerFilter||owner===ownerFilter)&&(!catFilter||t.category===catFilter)&&(!q||(t.description+' '+t.rawDescription).toLowerCase().includes(q))
+  }).sort((a,b)=>b.date.localeCompare(a.date));
+  const catOpts=categories().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  let rows='<tr><th>Date</th><th>Source</th><th>Owner</th><th>Description</th><th>Category</th><th>Treatment</th><th class="num">Amount</th><th class="num">Budget Impact</th></tr>';
+  list.forEach(t=>{
+    const ownerSel=`<select data-owner="${t.id}"><option ${!t.owner?'selected':''}>Shared/Unknown</option><option ${t.owner==='Joe'?'selected':''}>Joe</option><option ${t.owner==='Katy'?'selected':''}>Katy</option></select>`;
+    const catSel=`<select data-cat="${t.id}">${catOpts}</select>`;
+    const treatmentSel=`<select data-treatment="${t.id}">${treatmentOptions(transactionTreatment(t))}</select>`;
+    const impact = transactionSpendAmount(t);
+    const impactClass = impact < 0 ? 'ok' : impact > 0 ? '' : 'tiny';
+    rows+=`<tr><td>${t.date}</td><td>${esc(t.source)}</td><td>${ownerSel}</td><td><b>${esc(t.description)}</b><div class="tiny">${esc(t.purchasedBy||'')}</div></td><td>${catSel}</td><td>${treatmentSel}</td><td class="num">${money(t.amount)}</td><td class="num ${impactClass}">${money(impact)}</td></tr>`;
+  });
+  document.getElementById('txTable').innerHTML=rows;
+  document.querySelectorAll('[data-cat]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.cat);if(t)sel.value=t.category});
+};
+
+// Override save to preserve Treatment selections.
+saveTransactionEdits = function(){
+  document.querySelectorAll('[data-cat]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.cat);if(t)t.category=sel.value});
+  document.querySelectorAll('[data-owner]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.owner);if(t)t.owner=sel.value==='Shared/Unknown'?'':sel.value});
+  document.querySelectorAll('[data-treatment]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.treatment);if(t)t.treatment=sel.value});
+  render();
+};
+
+// Override dashboard summary so positive reimbursements correctly reduce spending instead of inflating it.
+renderDaily = function(){
+  const totalBudget=sum(app.spendingBudgets,b=>b.budget);
+  const totalSpent=sum(app.spendingBudgets,b=>txSpendByCategory(b.name));
+  const left=totalBudget-totalSpent;
+  const cash=cashflowRows();
+  const low=Math.min(...cash.map(r=>Number(r[3])||0));
+  const needs=app.transactions.filter(t=>inBudgetMonth(t)&&t.category==='Needs Review').length;
+  const sinkingPosition=sum(app.sinkingFunds,f=>sinkingFundPosition(f));
+  document.getElementById('topMetrics').innerHTML=[
+    ['Checking now',money(app.latestSchwabBalance),app.latestSchwabBalance<2500?'warn':'ok'],
+    ['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],
+    ['Sinking fund net',money(sinkingPosition),sinkingPosition<0?'bad':'ok'],
+    ['Needs review',needs,needs?'warn':'ok']
+  ].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]}">${m[1]}</div></div>`).join('');
+
+  renderPersonalView('Katy','katyView','Katy - Individual Priorities');
+  renderPersonalView('Joe','joeView','Joe - Individual Priorities');
+
+  let rows='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th><th>Progress</th></tr>';
+  app.spendingBudgets.forEach(b=>{
+    const spent=txSpendByCategory(b.name);
+    const rem=b.budget-spent;
+    const pct=b.budget?Math.min(100,Math.max(0,Math.round(spent/b.budget*100))):0;
+    const cls=rem<0?'bad':pct>80?'warn':'';
+    rows+=`<tr><td>${esc(b.friendly||b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${rem<0?'bad':''}">${money(rem)}</td><td><div class="progress"><div class="bar ${cls}" style="width:${pct}%"></div></div><div class="tiny">${pct}%</div></td></tr>`;
+  });
+  document.getElementById('remainingTable').innerHTML=rows;
+
+  const review=app.transactions.filter(t=>inBudgetMonth(t)&&t.category==='Needs Review');
+  document.getElementById('reviewTable').innerHTML=review.length?'<tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr>'+review.map(t=>`<tr><td>${t.date}</td><td>${esc(t.description)}</td><td class="num">${money(t.amount)}</td></tr>`).join(''):'<tr><td>No transactions need review.</td></tr>';
+
+  const sinkRows=app.sinkingFunds.map(f=>{
+    const spent=txSpendByCategory(f.name);
+    const contributed=sinkingFundContributionAmount(f.name);
+    const position=sinkingFundPosition(f);
+    return {name:f.name,balance:f.balance,budget:f.budget,saved:f.saved,contributed,spent,position};
+  }).sort((a,b)=>a.position-b.position);
+  document.getElementById('sinkingPositionTable').innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Saved</th><th class="num">Contributed Tx</th><th class="num">Spent</th><th class="num">Position</th></tr>'+sinkRows.map(f=>`<tr><td>${esc(f.name)}<div class="tiny">Planned monthly: ${money(f.budget)}</div></td><td class="num">${money(f.balance)}</td><td class="num">${money(f.saved)}</td><td class="num">${money(f.contributed)}</td><td class="num ${f.spent<0?'ok':''}">${money(f.spent)}</td><td class="num ${f.position<0?'bad':'ok'}">${money(f.position)}</td></tr>`).join('');
+
+  const upcoming=unpaidScheduledFuture().slice(0,12);
+  document.getElementById('upcomingTable').innerHTML='<tr><th>Date</th><th>Item</th><th>Bucket</th><th class="num">Left</th></tr>'+upcoming.map(x=>`<tr><td>${x.date}</td><td>${esc(x.name)}</td><td>${x.bucket}</td><td class="num">${money(x.left)}</td></tr>`).join('');
+  const confirmed=scheduledItems().map(x=>({...x,paid:paidForScheduled(x)})).filter(x=>x.paid>0);
+  document.getElementById('confirmedTable').innerHTML='<tr><th>Item</th><th>Bucket</th><th class="num">Scheduled</th><th class="num">Confirmed Paid</th></tr>'+confirmed.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.bucket}</td><td class="num">${money(x.amount)}</td><td class="num">${money(x.paid)}</td></tr>`).join('');
+};
+
+// Override budget/fund table for contribution display.
+renderBudgets = function(){
+  document.getElementById('budgetTable').innerHTML='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th></tr>'+app.spendingBudgets.map(b=>{
+    const spent=txSpendByCategory(b.name);
+    return`<tr><td>${esc(b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${(b.budget-spent)<0?'bad':''}">${money(b.budget-spent)}</td></tr>`
+  }).join('');
+  document.getElementById('sinkingTable').innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned Monthly</th><th class="num">Saved This Month</th><th class="num">Contributed Tx</th><th class="num">Spent This Month</th><th class="num">Current Position</th></tr>'+app.sinkingFunds.map(f=>{
+    const spent=txSpendByCategory(f.name);
+    const contributed=sinkingFundContributionAmount(f.name);
+    const position=sinkingFundPosition(f);
+    return `<tr><td>${esc(f.name)}</td><td class="num">${money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(f.saved)}</td><td class="num">${money(contributed)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${position<0?'bad':'ok'}">${money(position)}</td></tr>`
+  }).join('');
+};
+
+// Make category/treatment changes autosync just like owner/category changes.
+document.addEventListener('change', (e)=>{
+  if(e.target && e.target.dataset && e.target.dataset.treatment){
+    saveTransactionEdits();
+    if(typeof queueAutoSync === 'function') queueAutoSync('transaction treatment update');
+  }
+});
+
+// Re-render once with the patched calculation rules.
+render();
+</script>
+
 </body></html>
