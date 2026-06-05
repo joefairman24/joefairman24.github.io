@@ -17,7 +17,17 @@
 <section id="cashflow" class="panel"><div class="card"><h2>Checking Cash Flow Forecast</h2><div class="section"><div class="notice">Past spending is already reflected in the latest Schwab balance. Future cash flow only includes future paychecks and unpaid scheduled payments.</div><table id="cashflowTable"></table></div></div></section>
 <section id="budgets" class="panel"><div class="grid"><div class="card span6"><h2>Monthly Spending Budgets</h2><div class="section"><table id="budgetTable"></table></div></div><div class="card span6"><h2>Sinking Funds</h2><div class="section"><table id="sinkingTable"></table></div></div></div></section>
 <section id="debts" class="panel"><div class="grid"><div class="card pink span6"><h2>Credit Cards</h2><div class="section"><table id="ccTable"></table></div></div><div class="card pink span6"><h2>Loans</h2><div class="section"><table id="loanTable"></table></div></div><div class="card span12"><h2>Bills / Necessities</h2><div class="section"><div class="small">Mortgage and HELOC live under Loans. Groceries/gas/dog food/health are monthly spending budgets, not scheduled bills.</div><table id="billTable"></table></div></div></div></section>
-<section id="import" class="panel"><div class="card"><h2>Upload New Transactions</h2><div class="section"><div class="notice">Supports Apple Card and Charles Schwab exports. After upload, review categories in Transactions and click Save Changes.</div><input type="file" id="fileInput" accept=".csv" multiple><button id="importBtn" class="primary">Import CSV File(s)</button><button id="backupBtn">Export Backup JSON</button><button id="resetBtn" class="danger">Reset</button></div></div></section>
+<section id="import" class="panel"><div class="card"><h2>Upload New Transactions</h2><div class="section"><div class="notice">Supports Apple Card and Charles Schwab exports. After upload, review categories in Transactions and click Save Changes. For shared saving, connect this page to the Google Apps Script web app for your budget spreadsheet.</div>
+<div class="notice"><b>Google Sheets Sync</b><br>
+<div class="toolbar" style="margin-top:8px">
+<input id="apiUrl" placeholder="Paste Google Apps Script Web App URL here" style="min-width:420px">
+<button id="saveApiUrl" class="primary">Save API URL</button>
+<button id="loadSheet" class="primary">Load From Sheet</button>
+<button id="pushSheet" class="primary">Push Transactions To Sheet</button>
+</div>
+<div id="syncStatus" class="small">Not connected yet.</div>
+</div>
+<input type="file" id="fileInput" accept=".csv" multiple><button id="importBtn" class="primary">Import CSV File(s)</button><button id="backupBtn">Export Backup JSON</button><button id="resetBtn" class="danger">Reset</button></div></div></section>
 </main>
 <script id="initialData" type="application/json">{"month": "2026-06", "today": "2026-06-04", "latestSchwabBalance": 1106.96, "paychecks": [{"name": "Katy Paycheck 1", "date": "2026-06-05", "amount": 3051.52}, {"name": "Joe Paycheck 1", "date": "2026-06-12", "amount": 3026.21}, {"name": "Katy Paycheck 2", "date": "2026-06-19", "amount": 3051.52}, {"name": "Joe Paycheck 2", "date": "2026-06-26", "amount": 3026.21}], "creditCards": [{"name": "Best Buy", "owed": 1735.32, "min": 37.77, "due": 1, "apr": 0.0, "paymentKeywords": ["BEST BUY"]}, {"name": "Lowes", "owed": 1273.02, "min": 38.0, "due": 7, "apr": 31.99, "paymentKeywords": ["LOWES"]}, {"name": "Amazon Prime Visa (Chase)", "owed": 37912.61, "min": 1062.0, "due": 7, "apr": 29.99, "paymentKeywords": ["AMAZON PRIME VISA", "CHASE"]}, {"name": "Apple Card - Joe", "owed": 10051.57, "min": 310.58, "due": 20, "apr": 29.0, "paymentKeywords": ["APPLECARD GSBANK", "APPLE CARD"]}, {"name": "U.S. Bank", "owed": 10479.0, "min": 105.0, "due": 10, "apr": 0.0, "paymentKeywords": ["US BANK", "U.S. BANK"]}], "loans": [{"name": "Mortgage - Navy Federal", "owed": 373204.92, "min": 2717.94, "due": 1, "apr": 4.0, "paymentKeywords": ["NFCU MORT DEBIT 060126"], "expected": 2717.94}, {"name": "HELOC", "owed": 123859.1, "min": 1259.55, "due": 1, "apr": 9.75, "paymentKeywords": ["NFCU MORT DEBIT 060126"], "expected": 1259.55}, {"name": "BridgeCrest", "owed": 1984.13, "min": 316.0, "due": 15, "apr": 3.7, "paymentKeywords": ["BRIDGECREST"]}, {"name": "Wells Fargo Home Project", "owed": 2123.5, "min": 212.43, "due": 15, "apr": 0.0, "paymentKeywords": ["WELLS FARGO"]}, {"name": "Joe's Apple Watch", "owed": 266.36, "min": 66.58, "due": 1, "apr": 0.0, "paymentKeywords": ["APPLE WATCH"]}], "bills": [{"name": "Dominion Power", "amount": 221.69, "due": 1, "category": "Utilities", "paymentKeywords": ["DOMINION ENERGY"]}, {"name": "HRSD", "amount": 99.33, "due": 14, "category": "Utilities", "paymentKeywords": ["HRSD"]}, {"name": "Virginia Beach Public Utilities", "amount": 181.68, "due": 21, "category": "Utilities", "paymentKeywords": ["VIRGINIA BEACH PUBLIC UTILITIES"]}, {"name": "Verizon Internet", "amount": 89.99, "due": 16, "category": "Utilities", "paymentKeywords": ["VERIZON"]}, {"name": "T-Mobile Phone", "amount": 112.0, "due": 25, "category": "Utilities", "paymentKeywords": ["T-MOBILE"]}, {"name": "Car Insurance", "amount": 219.47, "due": 1, "category": "Insurance", "paymentKeywords": ["GRANGE INSURANCE"]}, {"name": "iCloud 2TB", "amount": 9.99, "due": 23, "category": "Tech", "paymentKeywords": ["ICLOUD"]}, {"name": "Spotify", "amount": 21.99, "due": 5, "category": "Entertainment", "paymentKeywords": ["SPOTIFY"]}, {"name": "Apple TV", "amount": 12.99, "due": 23, "category": "Entertainment", "paymentKeywords": ["APPLE TV"]}, {"name": "Apple Care 1", "amount": 5.08, "due": 15, "category": "Tech", "paymentKeywords": ["APPLE CARE"]}, {"name": "Apple Care 2", "amount": 6.14, "due": 16, "category": "Tech", "paymentKeywords": ["APPLE CARE"]}], "spendingBudgets": [{"name": "Groceries", "budget": 1500.0, "friendly": "Groceries"}, {"name": "Dog Food", "budget": 100.0, "friendly": "Dog food"}, {"name": "Auto Fuel & Maintenance", "budget": 250.0, "friendly": "Gas & auto"}, {"name": "House Cleaning", "budget": 300.0, "friendly": "House cleaning"}, {"name": "Basic Health & Personal Care", "budget": 150.0, "friendly": "Health & personal care"}, {"name": "Date Nights", "budget": 250.0, "friendly": "Date nights / family meals out"}, {"name": "Alcohol & Entertainment", "budget": 200.0, "friendly": "Alcohol & entertainment"}, {"name": "Joe - Individual Priorities", "budget": 250.0, "friendly": "Joe personal"}, {"name": "Katy - Individual Priorities", "budget": 250.0, "friendly": "Katy personal"}, {"name": "Kids Experiences", "budget": 200.0, "friendly": "Kids experiences"}, {"name": "Kids Miscellaneous", "budget": 150.0, "friendly": "Kids misc"}, {"name": "Household Consumables", "budget": 150.0, "friendly": "Household consumables"}, {"name": "Household Miscellaneous", "budget": 100.0, "friendly": "Household misc"}], "sinkingFunds": [{"name": "Family Travel Fund", "budget": 750.0, "balance": 0, "saved": 0}, {"name": "Friends Trip", "budget": 235.0, "balance": 0, "saved": 0}, {"name": "Home Improvement Fund", "budget": 100.0, "balance": 0, "saved": 0}, {"name": "Christmas Sinking Fund", "budget": 200.0, "balance": 0, "saved": 0}, {"name": "Birthdays & Anniversaries", "budget": 100.0, "balance": 0, "saved": 0}, {"name": "Summer Camps / Tutors", "budget": 175.0, "balance": 0, "saved": 0}, {"name": "Kids Sports", "budget": 85.0, "balance": 0, "saved": 0}, {"name": "Medical/Dental Bills", "budget": 200.0, "balance": 0, "saved": 0}, {"name": "Kids Birthday Parties", "budget": 25.0, "balance": 0, "saved": 0}, {"name": "Car Tax", "budget": 100.0, "balance": 0, "saved": 0}, {"name": "Car Repairs & Maintenance", "budget": 100.0, "balance": 0, "saved": 0}, {"name": "Emergency Fund", "budget": 250.0, "balance": 0, "saved": 0}, {"name": "Shared Fun Fund", "budget": 100.0, "balance": 0, "saved": 0}, {"name": "Debt Payoff", "budget": 1689.42, "balance": 0, "saved": 1689.42}, {"name": "Dog Grooming / Boarding", "budget": 125.0, "balance": 0, "saved": 0}, {"name": "Health & Fitness Fund", "budget": 50.0, "balance": 0, "saved": 0}], "transactions": [{"id": "apple-1", "date": "2026-06-03", "posted": "2026-06-04", "source": "Apple Card", "account": "Apple Card", "description": "7-Eleven", "rawDescription": "7-ELEVEN 41687 1912 LASKIN RD. VIRGINIA BEAC23454 VA USA", "amount": 30.78, "owner": "Joe", "purchasedBy": "Joseph Fairman", "category": "Auto Fuel & Maintenance"}, {"id": "apple-2", "date": "2026-06-01", "posted": "2026-06-04", "source": "Apple Card", "account": "Apple Card", "description": "Hot Tuna Bar & Grill", "rawDescription": "HOT TUNA BAR & GRILL 2817 SHORE DRIVE VIRGINIA BEAC23451 VA USA", "amount": 431.94, "owner": "Joe", "purchasedBy": "Joseph Fairman", "category": "Date Nights"}, {"id": "apple-3", "date": "2026-06-01", "posted": "2026-06-03", "source": "Apple Card", "account": "Apple Card", "description": "Rei.Com  800-426-4840", "rawDescription": "REI.COM 800-426-4840 PO BOX 1938 SUMNER 98390 WA USA", "amount": 30.87, "owner": "Joe", "purchasedBy": "Joseph Fairman", "category": "Kids Miscellaneous"}, {"id": "apple-4", "date": "2026-06-01", "posted": "2026-06-03", "source": "Apple Card", "account": "Apple Card", "description": "Webbs Water Gardens", "rawDescription": "WEBBS WATER GARDENS 6200 DAYS COVE RD STE 6 WHITE MARSH 21162 MD USA", "amount": 158.36, "owner": "Joe", "purchasedBy": "Joseph Fairman", "category": "Joe - Individual Priorities"}, {"id": "apple-5", "date": "2026-06-02", "posted": "2026-06-03", "source": "Apple Card", "account": "Apple Card", "description": "Amici Style", "rawDescription": "AMICI STYLE 2865 D-1 LYNNHAVEN DRIVE VIRGINIA BEAC23451 VA USA", "amount": 58.71, "owner": "Joe", "purchasedBy": "Joseph Fairman", "category": "Basic Health & Personal Care"}, {"id": "apple-6", "date": "2026-06-01", "posted": "2026-06-02", "source": "Apple Card", "account": "Apple Card", "description": "Food Lion #0391", "rawDescription": "FOOD LION #0391 2817 SHORE DRIVE VIRGINIA BEAC23451 VA USA", "amount": 51.76, "owner": "Joe", "purchasedBy": "Joseph Fairman", "category": "Groceries"}, {"id": "apple-7", "date": "2026-05-31", "posted": "2026-06-02", "source": "Apple Card", "account": "Apple Card", "description": "Chewy.com", "rawDescription": "CHEWY.COM 7700 WEST SUNRISE BOULEVARD PLANTATION 33322 FL USA", "amount": 139.27, "owner": "Joe", "purchasedBy": "Joseph Fairman", "category": "Dog Food"}, {"id": "apple-8", "date": "2026-05-31", "posted": "2026-06-02", "source": "Apple Card", "account": "Apple Card", "description": "Taylor S Hardware 6711", "rawDescription": "TAYLOR S HARDWARE 67112865 LYNNHAVEN DR UNIT 2 6711 VIRGINIA BEAC23451 VA USA", "amount": 93.06, "owner": "Joe", "purchasedBy": "Joseph Fairman", "category": "Joe - Individual Priorities"}, {"id": "apple-9", "date": "2026-05-31", "posted": "2026-06-02", "source": "Apple Card", "account": "Apple Card", "description": "McDonald Garden Center", "rawDescription": "MCDONALD GARDEN CENTER1276 N GREAT NECK ROAD VIRGINIA BEAC23454 VA USA", "amount": 142.07, "owner": "Joe", "purchasedBy": "Joseph Fairman", "category": "Joe - Individual Priorities"}, {"id": "apple-10", "date": "2026-06-01", "posted": "2026-06-01", "source": "Apple Card", "account": "Apple Card", "description": "Ach Deposit Internet Transfer From Account Ending In 7762", "rawDescription": "ACH DEPOSIT INTERNET TRANSFER FROM ACCOUNT ENDING IN 7762", "amount": -2000.0, "owner": "Joe", "purchasedBy": "Joseph Fairman", "category": "Payment / Transfer"}, {"id": "schwab-1", "date": "2026-06-04", "posted": "2026-06-04", "source": "Schwab", "account": "Schwab Checking", "description": "FOOD LION 2817 SHORE DR VIRGINIA BEAC", "rawDescription": "FOOD LION 2817 SHORE DR VIRGINIA BEAC", "amount": -45.08, "owner": "", "purchasedBy": "", "category": "Payment / Transfer", "runningBalance": 1106.96}, {"id": "schwab-2", "date": "2026-06-03", "posted": "2026-06-03", "source": "Schwab", "account": "Schwab Checking", "description": "FOOD LION 2817 SHORE DR VIRGINIA BEAC", "rawDescription": "FOOD LION 2817 SHORE DR VIRGINIA BEAC", "amount": -31.67, "owner": "", "purchasedBy": "", "category": "Payment / Transfer", "runningBalance": 1152.04}, {"id": "schwab-3", "date": "2026-06-03", "posted": "2026-06-03", "source": "Schwab", "account": "Schwab Checking", "description": "ZELLE TO CHRISTIAN  DE HARO CERVANTES", "rawDescription": "ZELLE TO CHRISTIAN  DE HARO CERVANTES", "amount": -1067.76, "owner": "", "purchasedBy": "", "category": "Payment / Transfer", "runningBalance": 1183.71}, {"id": "schwab-4", "date": "2026-06-03", "posted": "2026-06-03", "source": "Schwab", "account": "Schwab Checking", "description": "DOMINION ENERGY BILLPAY 260602", "rawDescription": "DOMINION ENERGY BILLPAY 260602", "amount": -185.37, "owner": "", "purchasedBy": "", "category": "Payment / Transfer", "runningBalance": 2251.47}, {"id": "schwab-5", "date": "2026-06-03", "posted": "2026-06-03", "source": "Schwab", "account": "Schwab Checking", "description": "PAYPAL PURCHASE 260602", "rawDescription": "PAYPAL PURCHASE 260602", "amount": -10.99, "owner": "", "purchasedBy": "", "category": "Payment / Transfer", "runningBalance": 2436.84}, {"id": "schwab-6", "date": "2026-06-02", "posted": "2026-06-02", "source": "Schwab", "account": "Schwab Checking", "description": "APPLECARD GSBANK PAYMENT 060126", "rawDescription": "APPLECARD GSBANK PAYMENT 060126", "amount": -2000.0, "owner": "", "purchasedBy": "", "category": "Debt Payment", "runningBalance": 2447.83}, {"id": "schwab-7", "date": "2026-06-02", "posted": "2026-06-02", "source": "Schwab", "account": "Schwab Checking", "description": "BEST BUY AUTO PYMT 260601", "rawDescription": "BEST BUY AUTO PYMT 260601", "amount": -50.76, "owner": "", "purchasedBy": "", "category": "Debt Payment", "runningBalance": 4447.83}, {"id": "schwab-8", "date": "2026-06-02", "posted": "2026-06-02", "source": "Schwab", "account": "Schwab Checking", "description": "GRANGE INSURANCE PREM PMT ~ Tran: ACHDW", "rawDescription": "GRANGE INSURANCE PREM PMT ~ Tran: ACHDW", "amount": -219.47, "owner": "", "purchasedBy": "", "category": "Payment / Transfer", "runningBalance": 4498.59}, {"id": "schwab-9", "date": "2026-06-01", "posted": "2026-06-01", "source": "Schwab", "account": "Schwab Checking", "description": "BELL A DANCE LLC SALE 260601", "rawDescription": "BELL A DANCE LLC SALE 260601", "amount": -45.0, "owner": "", "purchasedBy": "", "category": "Payment / Transfer", "runningBalance": 4718.06}, {"id": "schwab-10", "date": "2026-06-01", "posted": "2026-06-01", "source": "Schwab", "account": "Schwab Checking", "description": "NFCU MORT DEBIT 060126", "rawDescription": "NFCU MORT DEBIT 060126", "amount": -2717.94, "owner": "", "purchasedBy": "", "category": "Loan Payment", "runningBalance": 4763.06}, {"id": "schwab-11", "date": "2026-06-01", "posted": "2026-06-01", "source": "Schwab", "account": "Schwab Checking", "description": "NFCU MORT DEBIT 060126", "rawDescription": "NFCU MORT DEBIT 060126", "amount": -1251.1, "owner": "", "purchasedBy": "", "category": "Loan Payment", "runningBalance": 7481.0}], "paidLoans": {"Mortgage - Navy Federal": 2717.94, "HELOC": 1251.1, "BridgeCrest": 0, "Wells Fargo Home Project": 0, "Joe's Apple Watch": 0}, "paidCards": {"Best Buy": 50.76, "Lowes": 0, "Amazon Prime Visa (Chase)": 10.99, "Apple Card - Joe": 2000.0, "U.S. Bank": 0}, "paidBills": {"Dominion Power": 185.37, "HRSD": 0, "Virginia Beach Public Utilities": 0, "Verizon Internet": 0, "T-Mobile Phone": 0, "Car Insurance": 219.47, "iCloud 2TB": 0, "Spotify": 0, "Apple TV": 0, "Apple Care 1": 0, "Apple Care 2": 0}, "rules": [{"match": "FOOD LION", "category": "Groceries", "owner": ""}, {"match": "KROGER", "category": "Groceries", "owner": ""}, {"match": "TRADER JOE", "category": "Groceries", "owner": ""}, {"match": "ALDI", "category": "Groceries", "owner": ""}, {"match": "COSTCO", "category": "Groceries", "owner": ""}, {"match": "7-ELEVEN", "category": "Auto Fuel & Maintenance", "owner": ""}, {"match": "SHELL", "category": "Auto Fuel & Maintenance", "owner": ""}, {"match": "EXXON", "category": "Auto Fuel & Maintenance", "owner": ""}, {"match": "WAWA", "category": "Auto Fuel & Maintenance", "owner": ""}, {"match": "HOT TUNA", "category": "Date Nights", "owner": ""}, {"match": "AMICI STYLE", "category": "Basic Health & Personal Care", "owner": "Joe"}, {"match": "REI", "category": "Kids Miscellaneous", "owner": ""}, {"match": "CHEWY", "category": "Dog Food", "owner": ""}, {"match": "ZELLE TO CHRISTIAN", "category": "Home Improvement Fund", "owner": ""}, {"match": "BELL A DANCE", "category": "Kids Miscellaneous", "owner": ""}, {"match": "PAYPAL", "category": "Household Miscellaneous", "owner": ""}, {"match": "WEBBS WATER", "category": "Joe - Individual Priorities", "owner": "Joe"}, {"match": "TAYLOR", "category": "Joe - Individual Priorities", "owner": "Joe"}, {"match": "MCDONALD GARDEN", "category": "Joe - Individual Priorities", "owner": "Joe"}, {"match": "DOMINION", "category": "Dominion Power", "owner": ""}, {"match": "GRANGE", "category": "Car Insurance", "owner": ""}]}</script>
 <script>
@@ -72,5 +82,145 @@ function renderDebts(){document.getElementById('ccTable').innerHTML='<tr><th>Nam
 function saveTransactionEdits(){document.querySelectorAll('[data-cat]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.cat);if(t)t.category=sel.value});document.querySelectorAll('[data-owner]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.owner);if(t)t.owner=sel.value==='Shared/Unknown'?'':sel.value});render()}
 function exportBackup(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(app,null,2)],{type:'application/json'}));a.download='fairman-budget-backup-v7.json';a.click()}
 document.querySelectorAll('nav button').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.panel).classList.add('active')}));document.getElementById('saveChanges').addEventListener('click',saveTransactionEdits);document.getElementById('filterOwner').addEventListener('change',renderTransactions);document.getElementById('filterCategory').addEventListener('change',renderTransactions);document.getElementById('searchTx').addEventListener('input',renderTransactions);document.getElementById('backupBtn').addEventListener('click',exportBackup);document.getElementById('resetBtn').addEventListener('click',()=>{if(confirm('Reset to current attached data?')){localStorage.removeItem(KEY);app=JSON.parse(document.getElementById('initialData').textContent);render()}});render();
+
+
+/* ===== Google Sheets / Apps Script sync layer ===== */
+const API_URL_KEY = 'fairman-budget-apps-script-url';
+function setSyncStatus(message, kind=''){
+  const el = document.getElementById('syncStatus');
+  if(!el) return;
+  el.textContent = message;
+  el.className = 'small ' + kind;
+}
+function getApiUrl(){
+  return (document.getElementById('apiUrl')?.value || localStorage.getItem(API_URL_KEY) || '').trim();
+}
+function saveApiUrl(){
+  const url = getApiUrl();
+  if(!url){ alert('Paste your Apps Script Web App URL first.'); return; }
+  localStorage.setItem(API_URL_KEY, url);
+  setSyncStatus('Saved API URL. You can now load/push to Google Sheets.', 'ok');
+}
+async function callSheetApi(payload){
+  const url = getApiUrl();
+  if(!url) throw new Error('Missing Apps Script Web App URL.');
+  // text/plain avoids CORS preflight with Apps Script.
+  const res = await fetch(url, { method:'POST', body: JSON.stringify(payload) });
+  const text = await res.text();
+  let json;
+  try { json = JSON.parse(text); } catch(e){ throw new Error('Apps Script did not return JSON: ' + text.slice(0,200)); }
+  if(!json.ok) throw new Error(json.error || 'Unknown Apps Script error');
+  return json;
+}
+async function loadFromSheet(){
+  try{
+    setSyncStatus('Loading from Google Sheet...', 'warn');
+    const json = await callSheetApi({action:'getAll'});
+    app = json.app;
+    save();
+    render();
+    setSyncStatus('Loaded latest budget data from Google Sheets at ' + new Date().toLocaleTimeString(), 'ok');
+  }catch(err){
+    console.error(err);
+    setSyncStatus('Load failed: ' + err.message, 'bad');
+    alert('Load failed: ' + err.message);
+  }
+}
+async function pushTransactionsToSheet(){
+  try{
+    saveTransactionEdits();
+    setSyncStatus('Pushing transactions to Google Sheet...', 'warn');
+    const json = await callSheetApi({action:'saveTransactions', transactions: app.transactions});
+    setSyncStatus('Pushed ' + (json.count ?? app.transactions.length) + ' transactions to Google Sheets at ' + new Date().toLocaleTimeString(), 'ok');
+  }catch(err){
+    console.error(err);
+    setSyncStatus('Push failed: ' + err.message, 'bad');
+    alert('Push failed: ' + err.message);
+  }
+}
+function parseCsvText(text){
+  const rows=[]; let row=[], cell='', q=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i], n=text[i+1];
+    if(c==='"' && q && n==='"'){ cell+='"'; i++; }
+    else if(c==='"'){ q=!q; }
+    else if(c===',' && !q){ row.push(cell); cell=''; }
+    else if((c==='\n'||c==='\r') && !q){ if(row.length||cell){ row.push(cell); rows.push(row); row=[]; cell=''; } if(c==='\r'&&n==='\n') i++; }
+    else cell+=c;
+  }
+  if(row.length||cell){ row.push(cell); rows.push(row); }
+  return rows;
+}
+function findHeaderIndex(headers, names){
+  const lower=headers.map(h=>String(h).trim().toLowerCase());
+  for(const n of names){ const i=lower.indexOf(n); if(i>=0) return i; }
+  return -1;
+}
+function applyRules(desc){
+  const d=String(desc||'').toUpperCase();
+  for(const r of (app.rules||[])){
+    if(d.includes(String(r.match||'').toUpperCase())) return {category:r.category||'Needs Review', owner:r.owner||''};
+  }
+  return {category:'Needs Review', owner:''};
+}
+async function importCsvFiles(){
+  const files=[...(document.getElementById('fileInput')?.files||[])];
+  if(!files.length){ alert('Choose one or more CSV files first.'); return; }
+  let imported=0;
+  for(const file of files){
+    const text=await file.text();
+    const rows=parseCsvText(text).filter(r=>r.some(c=>String(c).trim()));
+    if(rows.length<2) continue;
+    const h=rows.shift();
+    const dateI=findHeaderIndex(h,['date','transaction date','posted date']);
+    const postI=findHeaderIndex(h,['posted','posted date','post date']);
+    const descI=findHeaderIndex(h,['description','merchant','name','memo','payee']);
+    const amountI=findHeaderIndex(h,['amount']);
+    const debitI=findHeaderIndex(h,['debit','withdrawal']);
+    const creditI=findHeaderIndex(h,['credit','deposit']);
+    const accountI=findHeaderIndex(h,['account','account name']);
+    const source = file.name.toLowerCase().includes('apple') ? 'Apple Card' : file.name.toLowerCase().includes('schwab') ? 'Schwab' : 'Imported';
+    for(const r of rows){
+      const desc = r[descI] || 'Imported transaction';
+      let amt=0;
+      if(amountI>=0) amt=Number(String(r[amountI]).replace(/[$,]/g,''));
+      else {
+        const debit=debitI>=0?Number(String(r[debitI]).replace(/[$,]/g,'')):0;
+        const credit=creditI>=0?Number(String(r[creditI]).replace(/[$,]/g,'')):0;
+        amt = credit ? Math.abs(credit) : -Math.abs(debit);
+      }
+      if(!amt) continue;
+      const rule=applyRules(desc);
+      app.transactions.push({
+        id:'imp-'+Date.now()+'-'+Math.random().toString(36).slice(2),
+        date:r[dateI] || app.today,
+        posted:postI>=0?r[postI]:'',
+        source,
+        account:accountI>=0?r[accountI]:source,
+        description:desc,
+        rawDescription:desc,
+        amount:amt,
+        owner:rule.owner,
+        purchasedBy:'',
+        category:rule.category
+      });
+      imported++;
+    }
+  }
+  render();
+  setSyncStatus('Imported ' + imported + ' transactions locally. Review categories, then Push Transactions To Sheet.', 'ok');
+}
+
+// Attach sync/import listeners after original script setup.
+setTimeout(()=>{
+  const url = localStorage.getItem(API_URL_KEY) || '';
+  const apiInput=document.getElementById('apiUrl');
+  if(apiInput) apiInput.value=url;
+  if(url) setSyncStatus('API URL saved. Load from Sheet or push transactions when ready.', 'ok');
+  document.getElementById('saveApiUrl')?.addEventListener('click', saveApiUrl);
+  document.getElementById('loadSheet')?.addEventListener('click', loadFromSheet);
+  document.getElementById('pushSheet')?.addEventListener('click', pushTransactionsToSheet);
+  document.getElementById('importBtn')?.addEventListener('click', importCsvFiles);
+},0);
 </script>
 </body></html>
