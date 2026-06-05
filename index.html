@@ -1059,4 +1059,116 @@ document.getElementById('apiUrl')?.addEventListener('blur', ()=>{
 });
 </script>
 
+
+<script>
+/* ===== v19: robust debt payoff calculation, no scheduled Apple TV leakage =====
+Debt Payoff should only be calculated from real debt-payment transactions.
+It should never use scheduled bills like Apple TV, Apple Care, etc.
+*/
+function normalizeText_v19(s){ return String(s || '').toUpperCase().replace(/[^A-Z0-9 ]+/g,' ').replace(/\s+/g,' ').trim(); }
+function debtPaymentTransactions_v19(){
+  return (app.transactions || []).filter(t => {
+    if(!inBudgetMonth(t)) return false;
+    const cat = String(t.category || '');
+    const treatment = String(t.treatment || t.type || '');
+    const desc = normalizeText_v19((t.rawDescription || '') + ' ' + (t.description || ''));
+    const looksLikePayment = /PAYMENT|PYMT|AUTO PYMT|ACH DEPOSIT|CARDMEMBER|APPLECARD GSBANK/.test(desc);
+    return cat === 'Debt Payment' || treatment === 'Debt Payment' || (cat === 'Payment / Transfer' && looksLikePayment && /CARD|BANK|CHASE|BEST BUY|LOWES|US BANK/.test(desc));
+  });
+}
+function accountKeywords_v19(account){
+  const keywords = [];
+  (account.paymentKeywords || []).forEach(k => { if(k) keywords.push(k); });
+  const name = String(account.name || '');
+  if(name.includes('Apple Card')) keywords.push('APPLECARD GSBANK','APPLE CARD','APPLECARD');
+  if(name.includes('Amazon Prime') || name.includes('Chase')) keywords.push('AMAZON PRIME VISA','CHASE CARD','CHASE');
+  if(name.includes('Best Buy')) keywords.push('BEST BUY');
+  if(name.includes('Lowes')) keywords.push('LOWES','LOWE');
+  if(name.includes('U.S. Bank') || name.includes('US Bank')) keywords.push('US BANK','U S BANK','U.S. BANK');
+  return [...new Set(keywords.map(normalizeText_v19).filter(Boolean))];
+}
+function debtPaidFromTransactionsForAccount_v19(account){
+  const keys = accountKeywords_v19(account);
+  const txs = debtPaymentTransactions_v19();
+  return sum(txs.filter(t => {
+    const desc = normalizeText_v19((t.rawDescription || '') + ' ' + (t.description || ''));
+    return keys.some(k => desc.includes(k));
+  }), t => Math.abs(Number(t.amount) || 0));
+}
+function paidCardAmount_v19(card){
+  const fromTx = debtPaidFromTransactionsForAccount_v19(card);
+  if(fromTx > 0) return fromTx;
+  // Fallback to Apps Script paidCards only if there is no matching actual transaction.
+  return Number((app.paidCards || {})[card.name] || 0);
+}
+function paidLoanAmount_v19(loan){
+  const fromTx = debtPaidFromTransactionsForAccount_v19(loan);
+  if(fromTx > 0) return fromTx;
+  return Number((app.paidLoans || {})[loan.name] || 0);
+}
+extraDebtPaidThisMonth = function(){
+  let extra = 0;
+  (app.creditCards || []).forEach(c => {
+    const paid = paidCardAmount_v19(c);
+    const min = Number(c.min || 0);
+    extra += Math.max(0, paid - min);
+  });
+  (app.loans || []).forEach(l => {
+    const lname = String(l.name || '').toLowerCase();
+    if(lname.includes('mortgage') || lname.includes('heloc')) return;
+    const paid = paidLoanAmount_v19(l);
+    const min = Number(l.min || 0);
+    extra += Math.max(0, paid - min);
+  });
+  return Math.round(extra * 100) / 100;
+};
+paidForScheduled = function(x){
+  if(x.kind === 'bill') return Number((app.paidBills || {})[x.name] || 0);
+  if(x.kind === 'card') {
+    const card = (app.creditCards || []).find(c => c.name === x.name);
+    return card ? paidCardAmount_v19(card) : Number((app.paidCards || {})[x.name] || 0);
+  }
+  if(x.kind === 'loan') {
+    const loan = (app.loans || []).find(l => l.name === x.name);
+    return loan ? paidLoanAmount_v19(loan) : Number((app.paidLoans || {})[x.name] || 0);
+  }
+  return 0;
+};
+sinkingFundContributionAmount = function(fundName){
+  if(isDebtPayoffFundName(fundName)) return extraDebtPaidThisMonth();
+  return sum((app.transactions || []).filter(t =>
+    inBudgetMonth(t) &&
+    t.category === fundName &&
+    transactionTreatment(t) === 'Sinking Fund Contribution'
+  ), t => Math.abs(Number(t.amount)||0));
+};
+sinkingFundPosition = function(f){
+  if(isDebtPayoffFundName(f.name)) {
+    return extraDebtPaidThisMonth() - (Number(f.budget)||0);
+  }
+  return (Number(f.balance)||0) + (Number(f.saved)||0) + sinkingFundContributionAmount(f.name) - txSpendByCategory(f.name);
+};
+// Add a helper row in the dashboard so you can see exactly what the app thinks happened.
+function debtPayoffDebugHtml_v19(){
+  const rows = (app.creditCards || []).map(c => {
+    const paid = paidCardAmount_v19(c);
+    const extra = Math.max(0, paid - Number(c.min||0));
+    return `<tr><td>${esc(c.name)}</td><td class="num">${money(paid)}</td><td class="num">${money(c.min)}</td><td class="num">${money(extra)}</td></tr>`;
+  }).join('');
+  return `<h3>Debt Payment Breakdown</h3><table><tr><th>Account</th><th class="num">Actual Paid</th><th class="num">Minimum</th><th class="num">Extra</th></tr>${rows}</table>`;
+}
+const renderBudgets_v19_prev = renderBudgets;
+renderBudgets = function(){
+  renderBudgets_v19_prev();
+  const table = document.getElementById('sinkingTable');
+  if(table && table.parentElement && !document.getElementById('debtPayoffDebug_v19')){
+    const div = document.createElement('div');
+    div.id = 'debtPayoffDebug_v19';
+    div.innerHTML = debtPayoffDebugHtml_v19();
+    table.parentElement.appendChild(div);
+  }
+};
+render();
+</script>
+
 </body></html>
