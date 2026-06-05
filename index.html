@@ -930,4 +930,133 @@ renderCashflow = function(){
 render();
 </script>
 
+
+<script>
+/* ===== v18: persistent config + safer local saving =====
+   Fixes Apps Script URL disappearing after refresh by storing it in:
+   1) localStorage, 2) sessionStorage, 3) cookie, 4) app._config.
+   Also rehydrates the URL field after every render/load/reset.
+*/
+const CONFIG_KEY_V18 = 'fairman-budget-config-v18';
+const API_URL_COOKIE = 'fairmanBudgetApiUrl';
+function safeStorageGet(store, key){
+  try { return store.getItem(key) || ''; } catch(e){ return ''; }
+}
+function safeStorageSet(store, key, value){
+  try { store.setItem(key, value); return true; } catch(e){ return false; }
+}
+function setCookieValue(name, value){
+  try {
+    document.cookie = name + '=' + encodeURIComponent(value || '') + '; max-age=31536000; path=/; SameSite=Lax';
+  } catch(e) {}
+}
+function getCookieValue(name){
+  try {
+    const parts = document.cookie.split(';').map(x=>x.trim());
+    const row = parts.find(x=>x.startsWith(name + '='));
+    return row ? decodeURIComponent(row.split('=').slice(1).join('=')) : '';
+  } catch(e){ return ''; }
+}
+function getConfig(){
+  let raw = safeStorageGet(localStorage, CONFIG_KEY_V18) || safeStorageGet(sessionStorage, CONFIG_KEY_V18);
+  if(raw){
+    try { return JSON.parse(raw); } catch(e){}
+  }
+  return {};
+}
+function saveConfig(config){
+  const raw = JSON.stringify(config || {});
+  safeStorageSet(localStorage, CONFIG_KEY_V18, raw);
+  safeStorageSet(sessionStorage, CONFIG_KEY_V18, raw);
+}
+function persistApiUrl(url){
+  url = String(url || '').trim();
+  if(!url) return;
+  safeStorageSet(localStorage, API_URL_KEY, url);
+  safeStorageSet(sessionStorage, API_URL_KEY, url);
+  setCookieValue(API_URL_COOKIE, url);
+  const cfg = getConfig();
+  cfg.apiUrl = url;
+  cfg.savedAt = new Date().toISOString();
+  saveConfig(cfg);
+  if(app){
+    app._config = app._config || {};
+    app._config.apiUrl = url;
+    // save app too, but do not depend on this alone
+    try { save(); } catch(e) {}
+  }
+}
+function readPersistedApiUrl(){
+  const fromInput = document.getElementById('apiUrl')?.value?.trim() || '';
+  const fromLocal = safeStorageGet(localStorage, API_URL_KEY).trim();
+  const fromSession = safeStorageGet(sessionStorage, API_URL_KEY).trim();
+  const fromCookie = getCookieValue(API_URL_COOKIE).trim();
+  const fromConfig = (getConfig().apiUrl || '').trim();
+  const fromApp = (app && app._config && app._config.apiUrl ? app._config.apiUrl : '').trim();
+  return fromInput || fromLocal || fromSession || fromCookie || fromConfig || fromApp || '';
+}
+// Override get/save URL with robust persistence.
+getApiUrl = function(){
+  return readPersistedApiUrl();
+};
+saveApiUrl = function(){
+  const input = document.getElementById('apiUrl');
+  const url = (input?.value || readPersistedApiUrl() || '').trim();
+  if(!url){ alert('Paste your Apps Script Web App URL first.'); return; }
+  persistApiUrl(url);
+  if(input) input.value = url;
+  setSyncStatus('Saved API URL permanently in this browser. You can now load/push to Google Sheets.', 'ok');
+  setLastSyncStatus('API URL saved at ' + new Date().toLocaleTimeString(), 'ok');
+};
+function hydrateApiUrlField(){
+  const url = readPersistedApiUrl();
+  const input = document.getElementById('apiUrl');
+  if(input && url && input.value !== url) input.value = url;
+  if(url){
+    persistApiUrl(url);
+    if(document.getElementById('syncStatus')){
+      setSyncStatus('API URL loaded. Auto-sync is ' + (isAutoSyncEnabled() ? 'on.' : 'off.'), isAutoSyncEnabled() ? 'ok' : 'warn');
+    }
+  }
+}
+// Preserve API URL when loading app data from Sheets.
+const loadFromSheet_v18_previous = loadFromSheet;
+loadFromSheet = async function(){
+  const urlBefore = readPersistedApiUrl();
+  try{
+    setSyncStatus('Loading from Google Sheet...', 'warn');
+    const json = await callSheetApi({action:'getAll'});
+    app = json.app;
+    if(urlBefore){
+      app._config = app._config || {};
+      app._config.apiUrl = urlBefore;
+      persistApiUrl(urlBefore);
+    }
+    save();
+    render();
+    hydrateApiUrlField();
+    setSyncStatus('Loaded latest budget data from Google Sheets at ' + new Date().toLocaleTimeString(), 'ok');
+  }catch(err){
+    console.error(err);
+    setSyncStatus('Load failed: ' + err.message, 'bad');
+    alert('Load failed: ' + err.message);
+  }
+};
+// Preserve URL on reset too.
+const resetBtn_v18 = document.getElementById('resetBtn');
+if(resetBtn_v18){
+  const oldReset = resetBtn_v18.onclick;
+  resetBtn_v18.addEventListener('click', ()=>setTimeout(hydrateApiUrlField, 50));
+}
+// Rehydrate at several points because render() replaces some UI state indirectly.
+setTimeout(hydrateApiUrlField, 0);
+setTimeout(hydrateApiUrlField, 300);
+window.addEventListener('pageshow', hydrateApiUrlField);
+document.getElementById('apiUrl')?.addEventListener('change', saveApiUrl);
+document.getElementById('apiUrl')?.addEventListener('blur', ()=>{
+  const url = document.getElementById('apiUrl')?.value?.trim();
+  if(url) persistApiUrl(url);
+});
+</script>
+
 </body></html>
