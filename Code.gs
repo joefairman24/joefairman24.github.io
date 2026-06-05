@@ -1,5 +1,5 @@
 /**
- * Fairman Family Budget Dashboard <-> Google Sheets backend
+ * Fairman Family Budget Dashboard v23 <-> Google Sheets backend
  *
  * SETUP:
  * 1) Open your budget Google Sheet.
@@ -13,7 +13,7 @@
 const SPREADSHEET_ID = '12DS_ocjW4O70RJeUSP3tO9YdBYnrFCPyr3K4c_5PKGE';
 
 function doGet(e) {
-  return jsonResponse({ ok: true, message: 'Budget backend v21 is running. Use POST actions: getAll, saveTransactions, saveAll.' });
+  return jsonResponse({ ok: true, message: 'Budget backend v23 is running. Use POST actions: getAll, saveTransactions, saveAll.' });
 }
 
 function doPost(e) {

@@ -7,10 +7,23 @@
 <style>
 :root{--bg:#f7f3ea;--card:#fffdf8;--ink:#263238;--muted:#667085;--line:#d0d5dd;--green:#dff4df;--pink:#f7dddd;--blue:#dbeafe;--cream:#fff7ed;--bad:#b42318;--warn:#b54708;--ok:#027a48;--dark:#263238}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--ink);font-size:16px}header{background:#fff8ed;border-bottom:2px solid #333;padding:14px;position:sticky;top:0;z-index:5}h1{margin:0;font-size:24px}h2{margin:0;padding:10px 12px;background:var(--green);border-bottom:1px solid #555;font-size:20px}h3{margin:16px 0 8px}.small{font-size:13px;color:var(--muted)}.tiny{font-size:12px;color:var(--muted)}nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}button{border:1px solid #667085;border-radius:8px;background:white;padding:9px 12px;font-weight:700;cursor:pointer}button.active{background:var(--dark);color:white}button.primary{background:var(--blue);color:#175cd3}button.danger{background:#fee4e2;color:#b42318}button.saving{background:#fef0c7;color:#93370d;border-color:#f79009}button.saved{background:#dcfae6;color:#05603a;border-color:#12b76a}main{max-width:1500px;margin:auto;padding:14px}.panel{display:none}.panel.active{display:block}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.span12{grid-column:span 12}.span8{grid-column:span 8}.span6{grid-column:span 6}.span4{grid-column:span 4}.card{background:var(--card);border:1px solid #555;border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.05)}.card.pink h2{background:var(--pink)}.card.blue h2{background:var(--blue)}.section{padding:12px;overflow:auto}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{background:white;border:1px solid var(--line);border-radius:10px;padding:12px}.metric .label{font-size:13px;color:var(--muted)}.metric .value{font-size:24px;font-weight:800;margin-top:5px}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}table{width:100%;border-collapse:collapse;font-size:14px}th,td{border-bottom:1px solid #eaecf0;padding:8px;text-align:left;vertical-align:top}th{background:var(--cream);color:#9a6700;font-size:13px}.num{text-align:right;white-space:nowrap}.pill{display:inline-block;border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800}.pill.ok{background:#dcfae6;color:#05603a}.pill.warn{background:#fef0c7;color:#93370d}.pill.bad{background:#fee4e2;color:#912018}.progress{height:12px;background:#eaecf0;border-radius:999px;overflow:hidden}.bar{height:100%;background:#12b76a}.bar.warn{background:#f79009}.bar.bad{background:#d92d20}input,select{width:100%;padding:8px;border:1px solid #98a2b3;border-radius:8px;background:white;font-size:14px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}.notice{background:#fffaeb;border-left:5px solid #f79009;padding:10px;margin:8px 0}.katy-card{border:2px solid #175cd3}.joe-card{border:2px solid #027a48}@media(max-width:900px){.span4,.span6,.span8{grid-column:span 12}.metrics{grid-template-columns:1fr 1fr}}
+
+/* v23 loading overlay */
+body.loading main{opacity:.18;pointer-events:none}
+#loadingOverlay{display:none;position:fixed;inset:0;z-index:9999;background:rgba(247,243,234,.94);align-items:center;justify-content:center;text-align:center;padding:24px}
+body.loading #loadingOverlay{display:flex}
+.loaderBox{background:#fffdf8;border:2px solid #555;border-radius:14px;max-width:520px;padding:24px;box-shadow:0 8px 30px rgba(0,0,0,.14)}
+.spinner{width:34px;height:34px;border:4px solid #d0d5dd;border-top-color:#175cd3;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.dataHealth{margin-top:10px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.dataHealth .metric .value{font-size:16px}
+@media(max-width:900px){.dataHealth{grid-template-columns:1fr 1fr}}
 </style>
 </head>
-<body>
-<header><h1>Fairman Family Budget Dashboard</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+<body class="loading">
+<header><h1>Fairman Family Budget Dashboard v23</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+
+<div id="loadingOverlay"><div class="loaderBox"><div class="spinner"></div><h2 style="border:0;background:transparent;padding:0;margin:0 0 8px">Loading Google Sheet…</h2><div class="small">Pulling the latest budget, transactions, bills, balances, and categories from the Sheet. This prevents the stale starter numbers from flashing first.</div><div id="loadingDetail" class="tiny" style="margin-top:10px">If this hangs, open the Import tab and check the Apps Script URL.</div></div></div>
 <main>
 <section id="daily" class="panel active"><div class="grid"><div class="card blue span12"><h2>Today’s Snapshot</h2><div class="section"><div class="metrics" id="topMetrics"></div></div></div><div class="card blue span6 katy-card"><h2>Katy Daily View</h2><div class="section" id="katyView"></div></div><div class="card blue span6 joe-card"><h2>Joe Daily View</h2><div class="section" id="joeView"></div></div><div class="card span8"><h2>What’s Left This Month</h2><div class="section"><div class="small">Only transactions dated in the selected budget month are counted here. Prior-month uploads are ignored for June spending.</div><table id="remainingTable"></table></div></div><div class="card pink span4"><h2>Needs Review</h2><div class="section"><table id="reviewTable"></table></div></div><div class="card span6"><h2>Sinking Fund Positions</h2><div class="section"><table id="sinkingPositionTable"></table></div></div><div class="card span6"><h2>Upcoming Scheduled Money Out</h2><div class="section"><table id="upcomingTable"></table></div></div><div class="card pink span6"><h2>Confirmed Payments</h2><div class="section"><table id="confirmedTable"></table></div></div></div></section>
 <section id="transactions" class="panel"><div class="card"><h2>Transactions</h2><div class="section"><div class="toolbar"><select id="filterOwner"><option value="">All owners</option><option>Joe</option><option>Katy</option><option>Shared/Unknown</option></select><select id="filterCategory"><option value="">All categories</option></select><input id="searchTx" placeholder="Search"><button id="saveChanges" class="primary">Save Changes</button></div><table id="txTable"></table></div></div></section>
@@ -1533,89 +1546,101 @@ render();
 </script>
 
 <script>
-/* ===== v22: fix Joe/Katy Recent Purchases logic =====
-   Recent purchase cards now show:
-   - selected budget month only
-   - owner must be Joe/Katy
-   - real spending only, not income, debt payments, loan payments, transfers, reimbursements
-   - newest first
-   - budget impact amount instead of raw import amount
+/* ===== v23: dashboard logic cleanup + loading overlay =====
+   - Recent Joe/Katy purchases show only ordinary spending-budget transactions owned by that person.
+   - Excludes debt payoff, loan payments, income, transfers, bills, and sinking fund draws.
+   - Adds loading overlay while Google Sheet source-of-truth loads.
+   - Adds small data-health line so stale data is obvious.
 */
-function isRealRecentPurchaseV22(t, owner){
-  if(!t) return false;
-  if(typeof currentMonthTxV21 === 'function'){
-    if(!currentMonthTxV21(t)) return false;
-  } else if(typeof inBudgetMonth === 'function'){
-    if(!inBudgetMonth(t)) return false;
+(function(){
+  function showLoadingV23(msg){
+    document.body.classList.add('loading');
+    const d=document.getElementById('loadingDetail'); if(d && msg) d.textContent=msg;
+  }
+  function hideLoadingV23(){ document.body.classList.remove('loading'); }
+  window.showLoadingV23=showLoadingV23; window.hideLoadingV23=hideLoadingV23;
+
+  const oldLoadFromSheet = typeof loadFromSheet === 'function' ? loadFromSheet : null;
+  if(oldLoadFromSheet){
+    loadFromSheet = async function(){
+      showLoadingV23('Loading live data from Google Sheets…');
+      try{
+        await oldLoadFromSheet.apply(this, arguments);
+        const d=document.getElementById('loadingDetail'); if(d) d.textContent='Loaded successfully.';
+      }catch(err){
+        console.error(err);
+        const d=document.getElementById('loadingDetail'); if(d) d.textContent='Load failed: '+(err && err.message ? err.message : err);
+        throw err;
+      }finally{
+        setTimeout(hideLoadingV23, 250);
+      }
+    };
   }
 
-  if((t.owner || '') !== owner) return false;
+  // If there is no API URL, do not trap the user behind the loading overlay forever.
+  setTimeout(()=>{
+    try{
+      if(typeof getApiUrl === 'function' && !getApiUrl()) hideLoadingV23();
+    }catch(e){ hideLoadingV23(); }
+  }, 1400);
+  // Safety valve.
+  setTimeout(()=>{ if(document.body.classList.contains('loading')) hideLoadingV23(); }, 9000);
 
-  const cat = String(t.category || '');
-  const treatment = (typeof transactionTreatmentV21 === 'function')
-    ? transactionTreatmentV21(t)
-    : (t.treatment || t.type || 'Auto');
+  function isOrdinarySpendingBudgetTxV23(t, owner){
+    if(!t) return false;
+    if(typeof currentMonthTxV21 === 'function' && !currentMonthTxV21(t)) return false;
+    if((t.owner || '') !== owner) return false;
+    const cat=String(t.category||'');
+    // Only monthly spending budget categories belong in the Recent Purchases cards.
+    if(!(app.spendingBudgets||[]).some(b=>b.name===cat)) return false;
+    const treatment = (typeof transactionTreatmentV21 === 'function') ? transactionTreatmentV21(t) : (t.treatment || t.type || 'Auto');
+    if(['Income','Ignore / Transfer','Sinking Fund Contribution','Reimbursement / Credit','Debt Payment','Loan Payment'].includes(treatment)) return false;
+    if(['Debt Payment','Loan Payment','Payment / Transfer','Income','Debt Payoff'].includes(cat)) return false;
+    const impact = typeof transactionSpendAmount === 'function' ? Number(transactionSpendAmount(t))||0 : Math.abs(Number(t.amount)||0);
+    return impact > 0;
+  }
+  function sortNewestV23(a,b){
+    const ad=String(a.date||''), bd=String(b.date||'');
+    if(ad!==bd) return bd.localeCompare(ad);
+    const ap=String(a.posted||''), bp=String(b.posted||'');
+    if(ap!==bp) return bp.localeCompare(ap);
+    return String(b.id||'').localeCompare(String(a.id||''));
+  }
 
-  if(['Income','Debt Payment','Loan Payment','Payment / Transfer'].includes(cat)) return false;
-  if(['Income','Ignore / Transfer','Sinking Fund Contribution','Reimbursement / Credit'].includes(treatment)) return false;
+  renderPersonalView = function(owner,id,budgetName){
+    const budget=getBudget(budgetName);
+    const spent=txSpendByCategory(budgetName);
+    const rem=budget-spent;
+    const ownerTx=(app.transactions||[])
+      .filter(t=>isOrdinarySpendingBudgetTxV23(t, owner))
+      .sort(sortNewestV23)
+      .slice(0,8);
+    document.getElementById(id).innerHTML=`<div class="metrics" style="grid-template-columns:1fr 1fr"><div class="metric"><div class="label">${owner} personal left</div><div class="value ${rem<0?'bad':rem<50?'warn':'ok'}">${money(rem)}</div></div><div class="metric"><div class="label">${owner} personal spent</div><div class="value">${money(spent)}</div></div></div><h3>Recent ${owner} purchases</h3><table><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Budget Impact</th></tr>${ownerTx.map(t=>`<tr><td>${esc(t.date)}</td><td>${esc(t.description)}${t.purchasedBy?`<div class="tiny">${esc(t.purchasedBy)}</div>`:''}</td><td>${esc(t.category)}</td><td class="num">${money(transactionSpendAmount(t))}</td></tr>`).join('')||'<tr><td colspan="4">No recent monthly-spending purchases for this person.</td></tr>'}</table><div class="tiny" style="margin-top:6px">Bills, debt payments, sinking fund spending, income, and transfers are intentionally excluded here.</div>`;
+  };
 
-  const impact = typeof transactionSpendAmount === 'function'
-    ? Number(transactionSpendAmount(t)) || 0
-    : Math.abs(Number(t.amount)||0);
+  function latestBalanceMetaV23(){
+    const tx=(app.transactions||[]).filter(t=>String(t.source||t.account||'').toLowerCase().includes('schwab') && t.runningBalance!==undefined && t.runningBalance!==null && t.runningBalance!=='');
+    if(!tx.length) return {date:'—', source:'Settings/fallback'};
+    tx.sort((a,b)=>(String(b.date||'')+'|'+String(b.posted||'')).localeCompare(String(a.date||'')+'|'+String(a.posted||'')));
+    return {date:tx[0].date||tx[0].posted||'—', source:tx[0].description||'Schwab running balance'};
+  }
 
-  return impact > 0;
-}
+  const oldRenderDaily = renderDaily;
+  renderDaily = function(){
+    oldRenderDaily();
+    const top=document.getElementById('topMetrics');
+    if(top && !document.getElementById('dataHealthV23')){
+      const meta=latestBalanceMetaV23();
+      const txCount=(app.transactions||[]).filter(t=>typeof currentMonthTxV21==='function'?currentMonthTxV21(t):true).length;
+      const received=(app.paychecks||[]).filter(p=>p.received===true || String(p.received).toLowerCase()==='true' || (typeof receivedPaycheckV21==='function' && receivedPaycheckV21(p))).length;
+      const apiOk=(typeof getApiUrl==='function' && getApiUrl())?'Connected':'No API URL';
+      top.insertAdjacentHTML('afterend', `<div id="dataHealthV23" class="dataHealth"><div class="metric"><div class="label">Sheet sync</div><div class="value ${apiOk==='Connected'?'ok':'warn'}">${apiOk}</div></div><div class="metric"><div class="label">Budget month</div><div class="value">${esc(app.month||'')}</div></div><div class="metric"><div class="label">Current-month tx</div><div class="value">${txCount}</div></div><div class="metric"><div class="label">Latest Schwab balance row</div><div class="value">${esc(meta.date)}</div><div class="tiny">${esc(meta.source).slice(0,55)}</div></div></div>`);
+    }
+  };
 
-function txSortNewestV22(a,b){
-  const ad = String(a.date || '');
-  const bd = String(b.date || '');
-  if(ad !== bd) return bd.localeCompare(ad);
-  const ap = String(a.posted || '');
-  const bp = String(b.posted || '');
-  if(ap !== bp) return bp.localeCompare(ap);
-  return String(b.id || '').localeCompare(String(a.id || ''));
-}
-
-renderPersonalView = function(owner,id,budgetName){
-  const budget = getBudget(budgetName);
-  const spent = txSpendByCategory(budgetName);
-  const rem = budget - spent;
-
-  const ownerTx = (app.transactions || [])
-    .filter(t => isRealRecentPurchaseV22(t, owner))
-    .sort(txSortNewestV22)
-    .slice(0,8);
-
-  document.getElementById(id).innerHTML =
-    `<div class="metrics" style="grid-template-columns:1fr 1fr">
-      <div class="metric">
-        <div class="label">${owner} personal left</div>
-        <div class="value ${rem<0?'bad':rem<50?'warn':'ok'}">${money(rem)}</div>
-      </div>
-      <div class="metric">
-        <div class="label">${owner} personal spent</div>
-        <div class="value">${money(spent)}</div>
-      </div>
-    </div>
-    <h3>Recent ${owner} purchases</h3>
-    <table>
-      <tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Budget Impact</th></tr>
-      ${
-        ownerTx.map(t => {
-          const impact = transactionSpendAmount(t);
-          return `<tr>
-            <td>${esc(t.date)}</td>
-            <td>${esc(t.description)}${t.purchasedBy?`<div class="tiny">${esc(t.purchasedBy)}</div>`:''}</td>
-            <td>${esc(t.category)}</td>
-            <td class="num">${money(impact)}</td>
-          </tr>`;
-        }).join('') || '<tr><td colspan="4">No recent purchases for this month.</td></tr>'
-      }
-    </table>`;
-};
-
-// If currently loaded, re-render immediately with corrected recent purchase cards.
-if(typeof render === 'function') render();
+  // Re-render with corrected personal cards after every sheet load / edit.
+  try{ render(); }catch(e){ console.warn('v23 re-render skipped', e); }
+})();
 </script>
 
 </body></html>
