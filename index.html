@@ -1177,7 +1177,7 @@ render();
    To make the API URL work in incognito/for both Joe and Katy, paste your Apps Script Web App URL below.
    Example: const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/.../exec';
 */
-const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbx6qKE9VndW7ccukhqJNGNdibFja5VhtatujWqMcqax6BOcX1c5b0AeLuHiqRYMRdQD/exec';
+const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbyiZOuCNIQFY_05DEKmhAC-wijAOA-C1Ia5k7_8g7EAYpQmdymz4d3WRfj9pjR1QnO-/exec';
 
 save = function(){ /* no-op: Google Sheets is the database */ };
 load = function(){ return structuredClone ? structuredClone(initialData) : JSON.parse(JSON.stringify(initialData)); };
@@ -1346,4 +1346,189 @@ setTimeout(()=>{
 render();
 </script>
 
+
+<script>
+/* ===== v21 stability patch: sheet-only source, current checking, debt payoff, pagination, month handling ===== */
+const V21_MIN_TX_DATE = (app && app.month ? app.month : '2026-06') + '-01';
+let txPageV21 = 1;
+let txPageSizeV21 = 50;
+let txShowAllMonthsV21 = false;
+function monthStartV21(){ return (app.month || '2026-06') + '-01'; }
+function safeNumV21(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
+function absMoneyV21(v){ return Math.abs(safeNumV21(v)); }
+function normalizeDebtOwedV21(v){ return Math.abs(safeNumV21(v)); }
+function isSchwabTxV21(t){ return String(t.source || t.account || '').toLowerCase().includes('schwab'); }
+function currentMonthTxV21(t){ return String(t.date || '').slice(0,7) === app.month && String(t.date || '') >= monthStartV21(); }
+// replace older inBudgetMonth so pre-June rows never count
+inBudgetMonth = currentMonthTxV21;
+function openingCheckingBalanceV21(){
+  return safeNumV21(app.openingCheckingBalance || app.openingBalance || app.startingCheckingBalance || app.carryoverBalance || app.settings?.openingCheckingBalance || 8732.10);
+}
+function currentCheckingBalanceV21(){
+  // 1) Best source: newest Schwab transaction that has runningBalance.
+  const withRb = (app.transactions||[]).filter(t => isSchwabTxV21(t) && t.runningBalance !== undefined && t.runningBalance !== null && t.runningBalance !== '' && !Number.isNaN(Number(t.runningBalance)));
+  if(withRb.length){
+    const sorted = withRb.map((t,i)=>({t,i,key:String(t.date||'')+'|'+String(t.posted||'')+'|'+String(i).padStart(6,'0')})).sort((a,b)=>b.key.localeCompare(a.key));
+    const bal = safeNumV21(sorted[0].t.runningBalance);
+    if(Number.isFinite(bal)) { app.latestSchwabBalance = bal; return bal; }
+  }
+  // 2) Fallback: opening checking + current-month Schwab transaction amounts.
+  const schwabSum = sum((app.transactions||[]).filter(t=>isSchwabTxV21(t) && currentMonthTxV21(t)), t=>safeNumV21(t.amount));
+  const computed = openingCheckingBalanceV21() + schwabSum;
+  if(Number.isFinite(computed) && computed !== openingCheckingBalanceV21()) { app.latestSchwabBalance = computed; return computed; }
+  // 3) Last fallback: whatever sheet sent.
+  return safeNumV21(app.latestSchwabBalance);
+}
+function transactionTreatmentV21(t){ return t.treatment || t.type || 'Auto'; }
+function isSinkingFundCategoryV21(cat){ return (app.sinkingFunds||[]).some(f=>f.name===cat); }
+function isBudgetCategoryV21(cat){ return (app.spendingBudgets||[]).some(b=>b.name===cat); }
+function isTrackedSpendingCategoryV21(cat){ return isBudgetCategoryV21(cat) || isSinkingFundCategoryV21(cat); }
+function isPaymentCategoryV21(cat){ return ['Debt Payment','Loan Payment','Payment / Transfer','Income'].includes(cat); }
+function inferredImpactV21(t){
+  const amount=safeNumV21(t.amount);
+  const src=String(t.source||t.account||'').toLowerCase();
+  if(src.includes('apple card') || src.includes('applecard')) return amount; // Apple charges positive, credits negative
+  return -amount; // bank withdrawals negative -> spend positive; deposits positive -> credit negative
+}
+transactionSpendAmount = function(t){
+  if(!currentMonthTxV21(t)) return 0;
+  if(isPaymentCategoryV21(t.category)) return 0;
+  if(!isTrackedSpendingCategoryV21(t.category)) return 0;
+  const treatment=transactionTreatmentV21(t);
+  const amount=safeNumV21(t.amount);
+  if(treatment==='Ignore / Transfer' || treatment==='Income' || treatment==='Sinking Fund Contribution') return 0;
+  if(treatment==='Expense') return Math.abs(amount);
+  if(treatment==='Reimbursement / Credit') return -Math.abs(amount);
+  return inferredImpactV21(t);
+};
+txSpendByCategory = function(cat){ return sum((app.transactions||[]).filter(t=>t.category===cat), t=>transactionSpendAmount(t)); };
+function sinkingFundContributionAmountV21(fundName){
+  return sum((app.transactions||[]).filter(t=> currentMonthTxV21(t) && t.category===fundName && transactionTreatmentV21(t)==='Sinking Fund Contribution'), t=>Math.abs(safeNumV21(t.amount)));
+}
+function cardKeywordsV21(card){
+  const n=String(card.name||'').toUpperCase();
+  if(n.includes('APPLE CARD')) return ['APPLECARD GSBANK','APPLE CARD PAYMENT','APPLECARD'];
+  if(n.includes('BEST BUY')) return ['BEST BUY'];
+  if(n.includes('LOWES')) return ['LOWES','LOWE'];
+  if(n.includes('U.S. BANK') || n.includes('US BANK')) return ['U.S. BANK','US BANK'];
+  if(n.includes('CHASE') || n.includes('AMAZON PRIME')) return ['CHASE CARD','CHASE CREDIT','AMAZON PRIME VISA'];
+  return (card.paymentKeywords||[]).map(k=>String(k).toUpperCase()).filter(k=>k.length>3);
+}
+function debtPaymentTransactionsV21(){
+  return (app.transactions||[]).filter(t=>{
+    if(!currentMonthTxV21(t)) return false;
+    const cat=String(t.category||''); const tr=transactionTreatmentV21(t); const desc=String(t.rawDescription||t.description||'').toUpperCase();
+    if(cat==='Debt Payment' || tr==='Debt Payment') return true;
+    return /PAYMENT|PYMT|ACH/.test(desc) && /(APPLECARD|BEST BUY|LOWES|U\.S\. BANK|US BANK|CHASE)/.test(desc);
+  });
+}
+function cardPaidMapV21(){
+  const out={}; (app.creditCards||[]).forEach(c=>out[c.name]=0);
+  debtPaymentTransactionsV21().forEach(t=>{
+    const desc=String(t.rawDescription||t.description||'').toUpperCase(); const amt=Math.abs(safeNumV21(t.amount)); if(!amt) return;
+    const matches=(app.creditCards||[]).filter(c=>cardKeywordsV21(c).some(k=>desc.includes(k)));
+    if(matches.length){
+      let winner=matches[0], diff=Math.abs(amt-safeNumV21(matches[0].min));
+      matches.forEach(c=>{const d=Math.abs(amt-safeNumV21(c.min)); if(d<diff){winner=c; diff=d;}});
+      out[winner.name]=(out[winner.name]||0)+amt;
+    }
+  });
+  return out;
+}
+function extraDebtPayoffV21(){
+  const paid=cardPaidMapV21();
+  return sum((app.creditCards||[]), c=>Math.max(0, safeNumV21(paid[c.name])-safeNumV21(c.min)));
+}
+function sinkingFundPositionV21(f){
+  if(f.name==='Debt Payoff') return extraDebtPayoffV21() - safeNumV21(f.budget);
+  return safeNumV21(f.balance) + safeNumV21(f.saved) + sinkingFundContributionAmountV21(f.name) - txSpendByCategory(f.name);
+}
+function sinkingFundActualV21(f){ return f.name==='Debt Payoff' ? extraDebtPayoffV21() : safeNumV21(f.saved)+sinkingFundContributionAmountV21(f.name); }
+function monthRemainingBudgetV21(){
+  return sum((app.spendingBudgets||[]), b=>Math.max(0, safeNumV21(b.budget)-txSpendByCategory(b.name)));
+}
+function receivedPaycheckV21(p){
+  if(p.received===true || String(p.received).toLowerCase()==='true') return true;
+  return (app.transactions||[]).some(t=> isSchwabTxV21(t) && currentMonthTxV21(t) && safeNumV21(t.amount)>0 && Math.abs(Math.abs(safeNumV21(t.amount))-Math.abs(safeNumV21(p.amount))) < 1.00);
+}
+cashflowRows = function(){
+  let bal=currentCheckingBalanceV21(); const rows=[[today(),'Latest Schwab/current checking balance',0,bal,'Start']]; const events=[];
+  (app.paychecks||[]).forEach(p=>{ if(p.date>=today() && !receivedPaycheckV21(p)) events.push({date:p.date,name:p.name,amount:safeNumV21(p.amount)}); });
+  unpaidScheduledFuture().forEach(x=>events.push({date:x.date,name:x.name+' ('+x.bucket+')',amount:-x.left}));
+  events.sort((a,b)=>a.date.localeCompare(b.date)); events.forEach(e=>{ bal += safeNumV21(e.amount); rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<2500?'Low':'OK']); });
+  return rows;
+};
+function treatmentOptionsV21(selected){ const opts=['Auto','Expense','Reimbursement / Credit','Sinking Fund Contribution','Ignore / Transfer','Income','Debt Payment','Loan Payment']; return opts.map(o=>`<option value="${esc(o)}" ${selected===o?'selected':''}>${esc(o)}</option>`).join(''); }
+renderTransactions = function(){
+  const ownerFilter=document.getElementById('filterOwner').value; const catFilter=document.getElementById('filterCategory').value; const q=document.getElementById('searchTx').value.toLowerCase();
+  let list=(app.transactions||[]).filter(t=>{
+    if(!txShowAllMonthsV21 && !currentMonthTxV21(t)) return false;
+    const owner=t.owner||'Shared/Unknown';
+    return(!ownerFilter||owner===ownerFilter)&&(!catFilter||t.category===catFilter)&&(!q||(String(t.description||'')+' '+String(t.rawDescription||'')).toLowerCase().includes(q));
+  }).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  const total=list.length; const pages=Math.max(1,Math.ceil(total/txPageSizeV21)); if(txPageV21>pages) txPageV21=pages; const start=(txPageV21-1)*txPageSizeV21; list=list.slice(start,start+txPageSizeV21);
+  const catOpts=categories().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  let controls=`<div class="toolbar"><button type="button" id="txPrevV21">Prev</button><span class="small">Page ${txPageV21} of ${pages} (${total} rows)</span><button type="button" id="txNextV21">Next</button><label class="small"><input type="checkbox" id="txAllMonthsV21" ${txShowAllMonthsV21?'checked':''}> Show all months</label><select id="txPageSizeV21"><option ${txPageSizeV21===25?'selected':''}>25</option><option ${txPageSizeV21===50?'selected':''}>50</option><option ${txPageSizeV21===100?'selected':''}>100</option></select></div>`;
+  let rows='<tr><th>Date</th><th>Source</th><th>Owner</th><th>Description</th><th>Category</th><th>Treatment</th><th class="num">Amount</th><th class="num">Budget Impact</th></tr>';
+  list.forEach(t=>{
+    const ownerSel=`<select data-owner="${t.id}"><option ${!t.owner?'selected':''}>Shared/Unknown</option><option ${t.owner==='Joe'?'selected':''}>Joe</option><option ${t.owner==='Katy'?'selected':''}>Katy</option></select>`;
+    const catSel=`<select data-cat="${t.id}">${catOpts}</select>`; const trSel=`<select data-treatment="${t.id}">${treatmentOptionsV21(transactionTreatmentV21(t))}</select>`;
+    const impact=transactionSpendAmount(t);
+    rows+=`<tr><td>${esc(t.date)}</td><td>${esc(t.source)}</td><td>${ownerSel}</td><td><b>${esc(t.description)}</b><div class="tiny">${esc(t.purchasedBy||'')}</div></td><td>${catSel}</td><td>${trSel}</td><td class="num">${money(t.amount)}</td><td class="num ${impact<0?'ok':''}">${money(impact)}</td></tr>`;
+  });
+  document.getElementById('txTable').innerHTML=controls+rows;
+  document.querySelectorAll('[data-cat]').forEach(sel=>{const t=(app.transactions||[]).find(x=>x.id===sel.dataset.cat); if(t) sel.value=t.category;});
+  document.getElementById('txPrevV21')?.addEventListener('click',()=>{txPageV21=Math.max(1,txPageV21-1); renderTransactions();});
+  document.getElementById('txNextV21')?.addEventListener('click',()=>{txPageV21=Math.min(pages,txPageV21+1); renderTransactions();});
+  document.getElementById('txAllMonthsV21')?.addEventListener('change',e=>{txShowAllMonthsV21=e.target.checked; txPageV21=1; renderTransactions();});
+  document.getElementById('txPageSizeV21')?.addEventListener('change',e=>{txPageSizeV21=Number(e.target.value)||50; txPageV21=1; renderTransactions();});
+};
+saveTransactionEdits = function(){
+  document.querySelectorAll('[data-cat]').forEach(sel=>{const t=(app.transactions||[]).find(x=>x.id===sel.dataset.cat); if(t)t.category=sel.value;});
+  document.querySelectorAll('[data-owner]').forEach(sel=>{const t=(app.transactions||[]).find(x=>x.id===sel.dataset.owner); if(t)t.owner=sel.value==='Shared/Unknown'?'':sel.value;});
+  document.querySelectorAll('[data-treatment]').forEach(sel=>{const t=(app.transactions||[]).find(x=>x.id===sel.dataset.treatment); if(t)t.treatment=sel.value;});
+  if(typeof queueAutoSync==='function') queueAutoSync('transaction edits');
+  renderDaily(); renderCashflow(); renderBudgets(); renderDebts();
+  const btn=document.getElementById('saveChanges'); if(btn){ const old=btn.textContent; btn.textContent='Saved ✓'; btn.classList.add('primary'); setTimeout(()=>btn.textContent=old,1500); }
+};
+// Avoid crash on treatment dropdown: update only the changed transaction and re-render summaries, not entire table.
+document.addEventListener('change', (e)=>{
+  const ds=e.target?.dataset||{};
+  if(ds.treatment || ds.cat || ds.owner){
+    if(ds.treatment){ const t=(app.transactions||[]).find(x=>x.id===ds.treatment); if(t)t.treatment=e.target.value; }
+    if(ds.cat){ const t=(app.transactions||[]).find(x=>x.id===ds.cat); if(t)t.category=e.target.value; }
+    if(ds.owner){ const t=(app.transactions||[]).find(x=>x.id===ds.owner); if(t)t.owner=e.target.value==='Shared/Unknown'?'':e.target.value; }
+    if(typeof queueAutoSync==='function') queueAutoSync('transaction dropdown update');
+    renderDaily(); renderCashflow(); renderBudgets(); renderDebts();
+  }
+});
+renderDaily = function(){
+  const totalBudget=sum(app.spendingBudgets,b=>b.budget); const totalSpent=sum(app.spendingBudgets,b=>txSpendByCategory(b.name)); const left=totalBudget-totalSpent;
+  const cash=cashflowRows(); const low=Math.min(...cash.map(r=>safeNumV21(r[3]))); const needs=(app.transactions||[]).filter(t=>currentMonthTxV21(t)&&t.category==='Needs Review').length;
+  const sinkingPosition=sum((app.sinkingFunds||[]).filter(f=>f.name!=='Debt Payoff'), f=>sinkingFundPositionV21(f)); const checking=currentCheckingBalanceV21();
+  document.getElementById('topMetrics').innerHTML=[['Checking now',money(checking),checking<2500?'warn':'ok'],['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],['Sinking fund net',money(sinkingPosition),sinkingPosition<0?'bad':'ok'],['Needs review',needs,needs?'warn':'ok']].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]}">${m[1]}</div></div>`).join('');
+  renderPersonalView('Katy','katyView','Katy - Individual Priorities'); renderPersonalView('Joe','joeView','Joe - Individual Priorities');
+  let rows='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th><th>Progress</th></tr>';
+  app.spendingBudgets.forEach(b=>{const spent=txSpendByCategory(b.name); const rem=safeNumV21(b.budget)-spent; const pct=b.budget?Math.min(100,Math.max(0,Math.round(spent/b.budget*100))):0; const cls=rem<0?'bad':pct>80?'warn':''; rows+=`<tr><td>${esc(b.friendly||b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${rem<0?'bad':''}">${money(rem)}</td><td><div class="progress"><div class="bar ${cls}" style="width:${pct}%"></div></div><div class="tiny">${pct}%</div></td></tr>`});
+  document.getElementById('remainingTable').innerHTML=rows;
+  const review=(app.transactions||[]).filter(t=>currentMonthTxV21(t)&&t.category==='Needs Review'); document.getElementById('reviewTable').innerHTML=review.length?'<tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr>'+review.slice(0,10).map(t=>`<tr><td>${t.date}</td><td>${esc(t.description)}</td><td class="num">${money(t.amount)}</td></tr>`).join(''):'<tr><td>No transactions need review.</td></tr>';
+  const sinkRows=(app.sinkingFunds||[]).map(f=>{const spent=f.name==='Debt Payoff'?0:txSpendByCategory(f.name); const actual=sinkingFundActualV21(f); const position=sinkingFundPositionV21(f); return {name:f.name,balance:f.balance,budget:f.budget,actual,spent,position};}).sort((a,b)=>a.position-b.position);
+  document.getElementById('sinkingPositionTable').innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned</th><th class="num">Actual / Contributed</th><th class="num">Spent</th><th class="num">Position</th></tr>'+sinkRows.map(f=>`<tr><td>${esc(f.name)}<div class="tiny">${f.name==='Debt Payoff'?'Extra payments above minimums':''}</div></td><td class="num">${f.name==='Debt Payoff'?'—':money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(f.actual)}</td><td class="num">${f.name==='Debt Payoff'?'—':money(f.spent)}</td><td class="num ${f.position<0?'bad':'ok'}">${money(f.position)}</td></tr>`).join('');
+  const upcoming=unpaidScheduledFuture().slice(0,12); document.getElementById('upcomingTable').innerHTML='<tr><th>Date</th><th>Item</th><th>Bucket</th><th class="num">Left</th></tr>'+upcoming.map(x=>`<tr><td>${x.date}</td><td>${esc(x.name)}</td><td>${x.bucket}</td><td class="num">${money(x.left)}</td></tr>`).join('');
+  const confirmed=scheduledItems().map(x=>({...x,paid:paidForScheduled(x)})).filter(x=>x.paid>0); document.getElementById('confirmedTable').innerHTML='<tr><th>Item</th><th>Bucket</th><th class="num">Scheduled</th><th class="num">Confirmed Paid</th></tr>'+confirmed.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.bucket}</td><td class="num">${money(x.amount)}</td><td class="num">${money(x.paid)}</td></tr>`).join('');
+};
+renderBudgets = function(){
+  document.getElementById('budgetTable').innerHTML='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th></tr>'+app.spendingBudgets.map(b=>{const spent=txSpendByCategory(b.name); const left=safeNumV21(b.budget)-spent; return`<tr><td>${esc(b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${left<0?'bad':''}">${money(left)}</td></tr>`}).join('');
+  document.getElementById('sinkingTable').innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned Monthly</th><th class="num">Actual / Contributed</th><th class="num">Spent This Month</th><th class="num">Current Position</th></tr>'+app.sinkingFunds.map(f=>{const spent=f.name==='Debt Payoff'?0:txSpendByCategory(f.name); const actual=sinkingFundActualV21(f); const pos=sinkingFundPositionV21(f); return `<tr><td>${esc(f.name)}</td><td class="num">${f.name==='Debt Payoff'?'—':money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(actual)}</td><td class="num">${f.name==='Debt Payoff'?'—':money(spent)}</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`}).join('');
+};
+renderDebts = function(){
+  const paidCards=cardPaidMapV21();
+  document.getElementById('ccTable').innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Min</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+app.creditCards.map(c=>`<tr><td>${esc(c.name)}</td><td class="num">${money(normalizeDebtOwedV21(c.owed))}</td><td class="num">${money(c.min)}</td><td class="num">${money(paidCards[c.name]||0)}</td><td>${c.due}</td><td class="num">${Number(c.apr).toFixed(2)}%</td></tr>`).join('');
+  document.getElementById('loanTable').innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Payment</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+app.loans.map(l=>`<tr><td>${esc(l.name)}</td><td class="num">${money(normalizeDebtOwedV21(l.owed))}</td><td class="num">${money(l.min)}</td><td class="num">${money(app.paidLoans[l.name]||0)}</td><td>${l.due}</td><td class="num">${Number(l.apr).toFixed(2)}%</td></tr>`).join('');
+  document.getElementById('billTable').innerHTML='<tr><th>Name</th><th class="num">Budget</th><th class="num">Confirmed Paid</th><th>Due</th></tr>'+app.bills.map(b=>`<tr><td>${esc(b.name)}</td><td class="num">${money(b.amount)}</td><td class="num">${money(app.paidBills[b.name]||0)}</td><td>${b.due}</td></tr>`).join('');
+};
+// Make filter changes reset page
+['filterOwner','filterCategory','searchTx'].forEach(id=>{const el=document.getElementById(id); if(el) el.addEventListener(id==='searchTx'?'input':'change',()=>{txPageV21=1; renderTransactions();});});
+render();
+</script>
 </body></html>
