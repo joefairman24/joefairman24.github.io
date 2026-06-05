@@ -632,4 +632,302 @@ document.addEventListener('change', (e)=>{
 render();
 </script>
 
+<script>
+/* ===== v16: checking balance, paycheck receipt, and debt payoff split logic ===== */
+function schwabTransactionsWithRunningBalance(){
+  return (app.transactions || []).filter(t =>
+    (String(t.source || '').toLowerCase().includes('schwab') || String(t.account || '').toLowerCase().includes('schwab')) &&
+    t.runningBalance !== undefined && t.runningBalance !== null && t.runningBalance !== '' && !Number.isNaN(Number(t.runningBalance))
+  );
+}
+function currentCheckingBalance(){
+  const schwab = schwabTransactionsWithRunningBalance();
+  if(!schwab.length) return Number(app.latestSchwabBalance)||0;
+  // Pick the most recent Schwab transaction with a running balance. If tied, keep import/order position last in list.
+  const sorted = [...schwab].sort((a,b)=>{
+    const da = String(a.posted || a.date || '');
+    const db = String(b.posted || b.date || '');
+    if(da !== db) return db.localeCompare(da);
+    return (app.transactions.indexOf(b) - app.transactions.indexOf(a));
+  });
+  const bal = Number(sorted[0].runningBalance);
+  if(!Number.isNaN(bal)) {
+    app.latestSchwabBalance = bal;
+    return bal;
+  }
+  return Number(app.latestSchwabBalance)||0;
+}
+function paycheckReceived(p){
+  if(p.received === true || String(p.received).toLowerCase() === 'true') return true;
+  const target = Math.abs(Number(p.amount)||0);
+  if(!target) return false;
+  return (app.transactions || []).some(t => {
+    if(!inBudgetMonth(t)) return false;
+    const amt = Number(t.amount)||0;
+    const desc = String(t.description || t.rawDescription || '').toLowerCase();
+    const source = String(t.source || t.account || '').toLowerCase();
+    const amountMatches = Math.abs(Math.abs(amt) - target) < 1.00;
+    const looksLikeDeposit = amt > 0 && (source.includes('schwab') || desc.includes('payroll') || desc.includes('direct dep') || desc.includes('deposit'));
+    return amountMatches && looksLikeDeposit;
+  });
+}
+function extraDebtPaidThisMonth(){
+  let extra = 0;
+  (app.creditCards || []).forEach(c => {
+    const paid = Number((app.paidCards || {})[c.name] || 0);
+    const min = Number(c.min || 0);
+    extra += Math.max(0, paid - min);
+  });
+  (app.loans || []).forEach(l => {
+    const paid = Number((app.paidLoans || {})[l.name] || 0);
+    const min = Number(l.min || 0);
+    // Do not count mortgage/HELOC normal over/under noise as debt snowball unless you intentionally overpay by a meaningful amount.
+    if(String(l.name || '').toLowerCase().includes('mortgage') || String(l.name || '').toLowerCase().includes('heloc')) return;
+    extra += Math.max(0, paid - min);
+  });
+  return Math.round(extra * 100) / 100;
+}
+function isDebtPayoffFundName(name){
+  return String(name || '').toLowerCase().trim() === 'debt payoff';
+}
+
+// Override sinking-fund contribution/position logic for debt payoff.
+sinkingFundContributionAmount = function(fundName){
+  if(isDebtPayoffFundName(fundName)) return extraDebtPaidThisMonth();
+  return sum(app.transactions.filter(t =>
+    inBudgetMonth(t) &&
+    t.category === fundName &&
+    transactionTreatment(t) === 'Sinking Fund Contribution'
+  ), t => Math.abs(Number(t.amount)||0));
+};
+sinkingFundPosition = function(f){
+  if(isDebtPayoffFundName(f.name)) {
+    return extraDebtPaidThisMonth() - (Number(f.budget)||0);
+  }
+  return (Number(f.balance)||0) + (Number(f.saved)||0) + sinkingFundContributionAmount(f.name) - txSpendByCategory(f.name);
+};
+
+// Override cash-flow so received paychecks are not double-counted and starting balance uses latest Schwab running balance.
+cashflowRows = function(){
+  let bal = currentCheckingBalance();
+  const rows=[[today(),'Latest Schwab running balance',0,bal,'Start']];
+  const events=[];
+  (app.paychecks || []).forEach(p=>{
+    if(p.date>=today() && !paycheckReceived(p)) events.push({date:p.date,name:p.name,amount:p.amount});
+  });
+  unpaidScheduledFuture().forEach(x=>events.push({date:x.date,name:x.name+' ('+x.bucket+')',amount:-x.left}));
+  events.sort((a,b)=>a.date.localeCompare(b.date));
+  events.forEach(e=>{bal+=Number(e.amount)||0;rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<2500?'Low':'OK'])});
+  return rows;
+};
+
+// Override daily dashboard to use dynamic checking and exclude Debt Payoff from cash-like sinking fund net.
+const renderDaily_v15_for_v16 = renderDaily;
+renderDaily = function(){
+  const totalBudget=sum(app.spendingBudgets,b=>b.budget);
+  const totalSpent=sum(app.spendingBudgets,b=>txSpendByCategory(b.name));
+  const left=totalBudget-totalSpent;
+  const cash=cashflowRows();
+  const needs=app.transactions.filter(t=>inBudgetMonth(t)&&t.category==='Needs Review').length;
+  const sinkingPosition=sum(app.sinkingFunds.filter(f=>!isDebtPayoffFundName(f.name)), f=>sinkingFundPosition(f));
+  document.getElementById('topMetrics').innerHTML=[
+    ['Checking now',money(currentCheckingBalance()),currentCheckingBalance()<2500?'warn':'ok'],
+    ['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],
+    ['Sinking fund net',money(sinkingPosition),sinkingPosition<0?'bad':'ok'],
+    ['Needs review',needs,needs?'warn':'ok']
+  ].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]}">${m[1]}</div></div>`).join('');
+
+  renderPersonalView('Katy','katyView','Katy - Individual Priorities');
+  renderPersonalView('Joe','joeView','Joe - Individual Priorities');
+
+  let rows='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th><th>Progress</th></tr>';
+  app.spendingBudgets.forEach(b=>{
+    const spent=txSpendByCategory(b.name);
+    const rem=b.budget-spent;
+    const pct=b.budget?Math.min(100,Math.max(0,Math.round(spent/b.budget*100))):0;
+    const cls=rem<0?'bad':pct>80?'warn':'';
+    rows+=`<tr><td>${esc(b.friendly||b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${rem<0?'bad':''}">${money(rem)}</td><td><div class="progress"><div class="bar ${cls}" style="width:${pct}%"></div></div><div class="tiny">${pct}%</div></td></tr>`;
+  });
+  document.getElementById('remainingTable').innerHTML=rows;
+
+  const review=app.transactions.filter(t=>inBudgetMonth(t)&&t.category==='Needs Review');
+  document.getElementById('reviewTable').innerHTML=review.length?'<tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr>'+review.map(t=>`<tr><td>${t.date}</td><td>${esc(t.description)}</td><td class="num">${money(t.amount)}</td></tr>`).join(''):'<tr><td>No transactions need review.</td></tr>';
+
+  const sinkRows=app.sinkingFunds.map(f=>{
+    const spent=txSpendByCategory(f.name);
+    const contributed=sinkingFundContributionAmount(f.name);
+    const position=sinkingFundPosition(f);
+    return {name:f.name,balance:f.balance,budget:f.budget,saved:f.saved,contributed,spent,position};
+  }).sort((a,b)=>a.position-b.position);
+  document.getElementById('sinkingPositionTable').innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned</th><th class="num">Actual / Contributed</th><th class="num">Spent</th><th class="num">Position</th></tr>'+sinkRows.map(f=>{
+    const isDebt = isDebtPayoffFundName(f.name);
+    return `<tr><td>${esc(f.name)}<div class="tiny">${isDebt?'Extra payments above minimums':'Saved this month: '+money(f.saved)}</div></td><td class="num">${isDebt?'—':money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(f.contributed)}</td><td class="num ${f.spent<0?'ok':''}">${isDebt?'—':money(f.spent)}</td><td class="num ${f.position<0?'bad':'ok'}">${money(f.position)}</td></tr>`;
+  }).join('');
+
+  const upcoming=unpaidScheduledFuture().slice(0,12);
+  document.getElementById('upcomingTable').innerHTML='<tr><th>Date</th><th>Item</th><th>Bucket</th><th class="num">Left</th></tr>'+upcoming.map(x=>`<tr><td>${x.date}</td><td>${esc(x.name)}</td><td>${x.bucket}</td><td class="num">${money(x.left)}</td></tr>`).join('');
+  const confirmed=scheduledItems().map(x=>({...x,paid:paidForScheduled(x)})).filter(x=>x.paid>0);
+  document.getElementById('confirmedTable').innerHTML='<tr><th>Item</th><th>Bucket</th><th class="num">Scheduled</th><th class="num">Confirmed Paid</th></tr>'+confirmed.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.bucket}</td><td class="num">${money(x.amount)}</td><td class="num">${money(x.paid)}</td></tr>`).join('');
+};
+
+// Override Budgets table for Debt Payoff clarity.
+renderBudgets = function(){
+  document.getElementById('budgetTable').innerHTML='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th></tr>'+app.spendingBudgets.map(b=>{
+    const spent=txSpendByCategory(b.name);
+    return`<tr><td>${esc(b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${(b.budget-spent)<0?'bad':''}">${money(b.budget-spent)}</td></tr>`
+  }).join('');
+  document.getElementById('sinkingTable').innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned Monthly</th><th class="num">Actual / Contributed</th><th class="num">Spent This Month</th><th class="num">Current Position</th></tr>'+app.sinkingFunds.map(f=>{
+    const spent=txSpendByCategory(f.name);
+    const contributed=sinkingFundContributionAmount(f.name);
+    const position=sinkingFundPosition(f);
+    const isDebt = isDebtPayoffFundName(f.name);
+    return `<tr><td>${esc(f.name)}${isDebt?'<div class="tiny">Automatically equals debt payments above minimums.</div>':''}</td><td class="num">${isDebt?'—':money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(contributed)}</td><td class="num ${spent<0?'ok':''}">${isDebt?'—':money(spent)}</td><td class="num ${position<0?'bad':'ok'}">${money(position)}</td></tr>`
+  }).join('');
+};
+
+// Add running balance to sheet payloads and update latest balance after imports/load.
+const originalBuildTransactionFromRow_v16 = buildTransactionFromRow;
+buildTransactionFromRow = function(row, headers, fileName){
+  const tx = originalBuildTransactionFromRow_v16(row, headers, fileName);
+  if(tx && tx.runningBalance !== undefined && tx.runningBalance !== null && tx.runningBalance !== '') {
+    const bal = Number(tx.runningBalance);
+    if(!Number.isNaN(bal)) app.latestSchwabBalance = bal;
+  }
+  return tx;
+};
+
+// Re-render with v16 logic.
+render();
+
+</script>
+
+<script>
+/* ===== v17: sinking-fund funding schedule / cash planning ===== */
+function ensureFundingScheduleCard(){
+  if(document.getElementById('fundingScheduleTable')) return;
+  const dailyGrid = document.querySelector('#daily .grid');
+  if(!dailyGrid) return;
+  const card = document.createElement('div');
+  card.className = 'card blue span12';
+  card.innerHTML = '<h2>Recommended Funding Schedule</h2><div class="section"><div class="small">This projects when it is safe to fund sinking funds after paychecks, unpaid bills/debt payments, remaining monthly spending, and your minimum checking buffer.</div><table id="fundingScheduleTable"></table></div>';
+  const after = document.getElementById('sinkingPositionTable')?.closest('.card');
+  if(after && after.parentNode === dailyGrid) after.insertAdjacentElement('afterend', card);
+  else dailyGrid.appendChild(card);
+}
+function minimumCheckingBuffer(){
+  return Number(app.minimumCheckingBuffer || app.buffer || app.minCheckingBuffer || 2500);
+}
+function remainingGeneralSpending(){
+  return (app.spendingBudgets || []).map(b=>{
+    const spent = txSpendByCategory(b.name);
+    return {name:b.name, amount:Math.max(0, (Number(b.budget)||0) - spent)};
+  }).filter(x=>x.amount>0.009);
+}
+function dateMax(a,b){ return String(a) > String(b) ? String(a) : String(b); }
+function nextPlanningDate(){ return today(); }
+function baseFundingEvents(){
+  const events=[];
+  (app.paychecks || []).forEach(p=>{
+    if(p.date>=today() && !paycheckReceived(p)) events.push({date:p.date,name:p.name,amount:Number(p.amount)||0,type:'Income'});
+  });
+  unpaidScheduledFuture().forEach(x=>events.push({date:x.date,name:x.name+' ('+x.bucket+')',amount:-Number(x.left||0),type:x.bucket}));
+  const generalRemaining = remainingGeneralSpending();
+  if(generalRemaining.length){
+    const reserveDate = dateMax(today(), app.month + '-15');
+    const total = sum(generalRemaining, x=>x.amount);
+    events.push({date:reserveDate,name:'Reserve remaining monthly spending',amount:-total,type:'Monthly spending'});
+  }
+  events.sort((a,b)=>a.date.localeCompare(b.date));
+  return events;
+}
+function simulateLowWithFunding(fundingEvents){
+  let bal = currentCheckingBalance();
+  let low = bal;
+  const events = [...baseFundingEvents(), ...(fundingEvents||[])].sort((a,b)=>a.date.localeCompare(b.date));
+  events.forEach(e=>{ bal += Number(e.amount)||0; if(bal<low) low=bal; });
+  return {low, ending:bal, events};
+}
+function canAddFunding(date, amount, existingFunding){
+  const testEvents = [...(existingFunding||[]), {date, name:'Test funding', amount:-Math.abs(Number(amount)||0), type:'Funding'}];
+  return simulateLowWithFunding(testEvents).low >= minimumCheckingBuffer();
+}
+function candidateFundingDates(){
+  const dates = new Set([today()]);
+  (app.paychecks || []).forEach(p=>{ if(p.date>=today() && !paycheckReceived(p)) dates.add(p.date); });
+  dates.add(app.month + '-28');
+  return [...dates].sort();
+}
+function monthlyFundNeed(f){
+  if(isDebtPayoffFundName(f.name)) return Math.max(0, (Number(f.budget)||0) - extraDebtPaidThisMonth());
+  const alreadySaved = (Number(f.saved)||0) + sinkingFundContributionAmount(f.name);
+  return Math.max(0, (Number(f.budget)||0) - alreadySaved);
+}
+function fundingPriority(f){
+  const name = String(f.name||'').toLowerCase();
+  if(name.includes('emergency')) return 1;
+  if(name.includes('medical') || name.includes('dental')) return 2;
+  if(name.includes('car tax') || name.includes('car repairs')) return 3;
+  if(name.includes('summer') || name.includes('kids sports') || name.includes('birthday')) return 4;
+  if(name.includes('christmas') || name.includes('birthdays')) return 5;
+  if(name.includes('family travel') || name.includes('friends trip')) return 6;
+  if(name.includes('dog')) return 7;
+  if(name.includes('home improvement')) return 8;
+  if(name.includes('shared fun') || name.includes('health')) return 9;
+  if(isDebtPayoffFundName(f.name)) return 99;
+  return 50;
+}
+function fundingSchedule(){
+  const scheduled=[];
+  const fundingEvents=[];
+  const dates = candidateFundingDates();
+  const funds = [...(app.sinkingFunds||[])].map(f=>({...f, need:monthlyFundNeed(f)})).filter(f=>f.need>0.009).sort((a,b)=>fundingPriority(a)-fundingPriority(b));
+  funds.forEach(f=>{
+    let plannedDate = null;
+    for(const d of dates){
+      if(canAddFunding(d, f.need, fundingEvents)){ plannedDate = d; break; }
+    }
+    if(plannedDate){
+      const label = isDebtPayoffFundName(f.name) ? 'Extra debt payoff target' : f.name + ' funding';
+      fundingEvents.push({date:plannedDate,name:label,amount:-f.need,type:'Funding'});
+      const sim = simulateLowWithFunding(fundingEvents);
+      scheduled.push({name:f.name,need:f.need,date:plannedDate,status:'Scheduled',low:sim.low,reason:isDebtPayoffFundName(f.name)?'Extra amount above card/loan minimums.':'Safe while keeping buffer.'});
+    } else {
+      const sim = simulateLowWithFunding(fundingEvents);
+      scheduled.push({name:f.name,need:f.need,date:'Not safe yet',status:'Hold',low:sim.low,reason:'Would drop projected checking below buffer.'});
+    }
+  });
+  return {scheduled, fundingEvents, base:simulateLowWithFunding([]), after:simulateLowWithFunding(fundingEvents)};
+}
+function renderFundingSchedule(){
+  ensureFundingScheduleCard();
+  const table = document.getElementById('fundingScheduleTable');
+  if(!table) return;
+  const plan = fundingSchedule();
+  const totalScheduled = sum(plan.scheduled.filter(x=>x.status==='Scheduled'), x=>x.need);
+  const totalHold = sum(plan.scheduled.filter(x=>x.status!=='Scheduled'), x=>x.need);
+  let rows = `<tr><th colspan="6">Buffer: ${money(minimumCheckingBuffer())} &nbsp; | &nbsp; Fundable this month: ${money(totalScheduled)} &nbsp; | &nbsp; Hold: ${money(totalHold)} &nbsp; | &nbsp; Projected low after funding: ${money(plan.after.low)}</th></tr>`;
+  rows += '<tr><th>Fund / Target</th><th class="num">Still Needed</th><th>Recommended Date</th><th>Status</th><th class="num">Projected Low</th><th>Reason</th></tr>';
+  if(!plan.scheduled.length){
+    rows += '<tr><td colspan="6">All sinking funds / debt payoff targets appear funded for this month.</td></tr>';
+  } else {
+    rows += plan.scheduled.map(x=>{
+      const cls = x.status==='Scheduled' ? 'ok' : 'warn';
+      return `<tr><td>${esc(x.name)}</td><td class="num">${money(x.need)}</td><td>${esc(x.date)}</td><td><span class="pill ${cls}">${esc(x.status)}</span></td><td class="num ${x.low<minimumCheckingBuffer()?'bad':'ok'}">${money(x.low)}</td><td>${esc(x.reason)}</td></tr>`;
+    }).join('');
+  }
+  table.innerHTML = rows;
+}
+const renderDaily_v16_for_v17 = renderDaily;
+renderDaily = function(){
+  renderDaily_v16_for_v17();
+  renderFundingSchedule();
+};
+const renderCashflow_v16_for_v17 = renderCashflow;
+renderCashflow = function(){
+  renderCashflow_v16_for_v17();
+  renderFundingSchedule();
+};
+render();
+</script>
+
 </body></html>
