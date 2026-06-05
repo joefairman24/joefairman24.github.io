@@ -10,7 +10,7 @@
 </style>
 </head>
 <body>
-<header><h1>Fairman Family Budget Dashboard v20</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+<header><h1>Fairman Family Budget Dashboard</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 <main>
 <section id="daily" class="panel active"><div class="grid"><div class="card blue span12"><h2>Today’s Snapshot</h2><div class="section"><div class="metrics" id="topMetrics"></div></div></div><div class="card blue span6 katy-card"><h2>Katy Daily View</h2><div class="section" id="katyView"></div></div><div class="card blue span6 joe-card"><h2>Joe Daily View</h2><div class="section" id="joeView"></div></div><div class="card span8"><h2>What’s Left This Month</h2><div class="section"><div class="small">Only transactions dated in the selected budget month are counted here. Prior-month uploads are ignored for June spending.</div><table id="remainingTable"></table></div></div><div class="card pink span4"><h2>Needs Review</h2><div class="section"><table id="reviewTable"></table></div></div><div class="card span6"><h2>Sinking Fund Positions</h2><div class="section"><table id="sinkingPositionTable"></table></div></div><div class="card span6"><h2>Upcoming Scheduled Money Out</h2><div class="section"><table id="upcomingTable"></table></div></div><div class="card pink span6"><h2>Confirmed Payments</h2><div class="section"><table id="confirmedTable"></table></div></div></div></section>
 <section id="transactions" class="panel"><div class="card"><h2>Transactions</h2><div class="section"><div class="toolbar"><select id="filterOwner"><option value="">All owners</option><option>Joe</option><option>Katy</option><option>Shared/Unknown</option></select><select id="filterCategory"><option value="">All categories</option></select><input id="searchTx" placeholder="Search"><button id="saveChanges" class="primary">Save Changes</button></div><table id="txTable"></table></div></div></section>
@@ -1531,4 +1531,91 @@ renderDebts = function(){
 ['filterOwner','filterCategory','searchTx'].forEach(id=>{const el=document.getElementById(id); if(el) el.addEventListener(id==='searchTx'?'input':'change',()=>{txPageV21=1; renderTransactions();});});
 render();
 </script>
+
+<script>
+/* ===== v22: fix Joe/Katy Recent Purchases logic =====
+   Recent purchase cards now show:
+   - selected budget month only
+   - owner must be Joe/Katy
+   - real spending only, not income, debt payments, loan payments, transfers, reimbursements
+   - newest first
+   - budget impact amount instead of raw import amount
+*/
+function isRealRecentPurchaseV22(t, owner){
+  if(!t) return false;
+  if(typeof currentMonthTxV21 === 'function'){
+    if(!currentMonthTxV21(t)) return false;
+  } else if(typeof inBudgetMonth === 'function'){
+    if(!inBudgetMonth(t)) return false;
+  }
+
+  if((t.owner || '') !== owner) return false;
+
+  const cat = String(t.category || '');
+  const treatment = (typeof transactionTreatmentV21 === 'function')
+    ? transactionTreatmentV21(t)
+    : (t.treatment || t.type || 'Auto');
+
+  if(['Income','Debt Payment','Loan Payment','Payment / Transfer'].includes(cat)) return false;
+  if(['Income','Ignore / Transfer','Sinking Fund Contribution','Reimbursement / Credit'].includes(treatment)) return false;
+
+  const impact = typeof transactionSpendAmount === 'function'
+    ? Number(transactionSpendAmount(t)) || 0
+    : Math.abs(Number(t.amount)||0);
+
+  return impact > 0;
+}
+
+function txSortNewestV22(a,b){
+  const ad = String(a.date || '');
+  const bd = String(b.date || '');
+  if(ad !== bd) return bd.localeCompare(ad);
+  const ap = String(a.posted || '');
+  const bp = String(b.posted || '');
+  if(ap !== bp) return bp.localeCompare(ap);
+  return String(b.id || '').localeCompare(String(a.id || ''));
+}
+
+renderPersonalView = function(owner,id,budgetName){
+  const budget = getBudget(budgetName);
+  const spent = txSpendByCategory(budgetName);
+  const rem = budget - spent;
+
+  const ownerTx = (app.transactions || [])
+    .filter(t => isRealRecentPurchaseV22(t, owner))
+    .sort(txSortNewestV22)
+    .slice(0,8);
+
+  document.getElementById(id).innerHTML =
+    `<div class="metrics" style="grid-template-columns:1fr 1fr">
+      <div class="metric">
+        <div class="label">${owner} personal left</div>
+        <div class="value ${rem<0?'bad':rem<50?'warn':'ok'}">${money(rem)}</div>
+      </div>
+      <div class="metric">
+        <div class="label">${owner} personal spent</div>
+        <div class="value">${money(spent)}</div>
+      </div>
+    </div>
+    <h3>Recent ${owner} purchases</h3>
+    <table>
+      <tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Budget Impact</th></tr>
+      ${
+        ownerTx.map(t => {
+          const impact = transactionSpendAmount(t);
+          return `<tr>
+            <td>${esc(t.date)}</td>
+            <td>${esc(t.description)}${t.purchasedBy?`<div class="tiny">${esc(t.purchasedBy)}</div>`:''}</td>
+            <td>${esc(t.category)}</td>
+            <td class="num">${money(impact)}</td>
+          </tr>`;
+        }).join('') || '<tr><td colspan="4">No recent purchases for this month.</td></tr>'
+      }
+    </table>`;
+};
+
+// If currently loaded, re-render immediately with corrected recent purchase cards.
+if(typeof render === 'function') render();
+</script>
+
 </body></html>
