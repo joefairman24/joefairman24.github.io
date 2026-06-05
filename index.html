@@ -40,7 +40,7 @@ body.loading main{opacity:1!important;pointer-events:auto!important}
 
 </head>
 <body>
-<header><h1>Fairman Family Budget Dashboard v28</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+<header><h1>Fairman Family Budget Dashboard</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 
 </div>
 <main>
@@ -1209,7 +1209,7 @@ render();
    To make the API URL work in incognito/for both Joe and Katy, paste your Apps Script Web App URL below.
    Example: const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/.../exec';
 */
-const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbwWeIrtLmVkmWAUsppEiMhGVfFnzah0jUHbJRSW5wN3QxenI4hd3ic_KxRsPV_2LvIL/exec';
+const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbw4SJVc8-HfxIEzctqmC2Wqr18jAR1CJHtEh5UDosxftblvpONv95F6IE1TphbZ93QC/exec';
 
 save = function(){ /* no-op: Google Sheets is the database */ };
 load = function(){ return structuredClone ? structuredClone(initialData) : JSON.parse(JSON.stringify(initialData)); };
@@ -2498,6 +2498,487 @@ render();
   } else {
     metricPlaceholdersV28('Loading');
   }
+})();
+</script>
+
+
+<style>
+/* v29 split transaction UI */
+.split-row {
+  background:#f8fafc;
+}
+.split-box {
+  border:1px solid #d0d5dd;
+  border-radius:8px;
+  padding:8px;
+  margin-top:6px;
+  background:#fff;
+}
+.split-line {
+  display:grid;
+  grid-template-columns: 1.2fr 1.2fr 1fr auto;
+  gap:6px;
+  align-items:center;
+  margin:5px 0;
+}
+.split-summary {
+  font-size:12px;
+  color:#475467;
+  margin-top:4px;
+}
+button.tiny-btn {
+  padding:4px 7px;
+  font-size:12px;
+}
+.split-warning {
+  color:#b42318;
+  font-weight:700;
+}
+.split-ok {
+  color:#027a48;
+  font-weight:700;
+}
+</style>
+
+<script>
+/* ===== v29: Split Transactions =====
+   One transaction can now be split across multiple categories/treatments.
+   Example:
+   Apple Card payment -$2,000
+   split:
+     Apple Card - Joe / Debt Payment / 310.58
+     Debt Payoff / Debt Payoff Extra / 1689.42
+*/
+
+(function(){
+  const SPLIT_TREATMENTS_V29 = [
+    'Auto',
+    'Expense',
+    'Reimbursement / Credit',
+    'Sinking Fund Contribution',
+    'Debt Payment',
+    'Debt Payoff Extra',
+    'Loan Payment',
+    'Ignore / Transfer',
+    'Income'
+  ];
+
+  function currentMonthV29(t){
+    if(!t) return false;
+    if(typeof currentMonthTxV21 === 'function') return currentMonthTxV21(t);
+    if(typeof inBudgetMonth === 'function') return inBudgetMonth(t);
+    return String(t.date||'').slice(0,7) === app.month;
+  }
+
+  function isSinkingFundV29(cat){
+    return (app.sinkingFunds||[]).some(f=>f.name===cat);
+  }
+
+  function isMonthlyBudgetV29(cat){
+    return (app.spendingBudgets||[]).some(b=>b.name===cat);
+  }
+
+  function variableNecessityNamesV29(){
+    // Bills that are really variable monthly spending, not fixed scheduled bills.
+    return new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']);
+  }
+
+  function isTrackedSpendCategoryV29(cat){
+    return isMonthlyBudgetV29(cat) || isSinkingFundV29(cat) || variableNecessityNamesV29().has(cat);
+  }
+
+  function isDebtOrLoanAccountV29(cat){
+    return [...(app.creditCards||[]).map(c=>c.name), ...(app.loans||[]).map(l=>l.name)].includes(cat);
+  }
+
+  function treatmentV29(t){
+    return t.treatment || t.type || 'Auto';
+  }
+
+  function signedSpendFromAmountV29(t, amount, treatment){
+    amount = Number(amount)||0;
+    const src = String(t.source || t.account || '').toLowerCase();
+
+    if(['Ignore / Transfer','Income','Sinking Fund Contribution','Debt Payment','Loan Payment'].includes(treatment)) return 0;
+    if(treatment === 'Reimbursement / Credit') return -Math.abs(amount);
+    if(treatment === 'Expense') return Math.abs(amount);
+    if(treatment === 'Debt Payoff Extra') return Math.abs(amount);
+
+    // Auto:
+    // Apple/Card charges are positive. Bank/checking spending is negative.
+    if(src.includes('apple') || src.includes('card')){
+      return amount > 0 ? amount : 0;
+    }
+    return amount < 0 ? Math.abs(amount) : -Math.abs(amount);
+  }
+
+  function splitAmountV29(split){
+    return Math.abs(Number(split.amount)||0);
+  }
+
+  function txSplitsV29(t){
+    return Array.isArray(t.splits) ? t.splits : [];
+  }
+
+  function splitSpendImpactV29(t, split){
+    const cat = split.category || '';
+    const treatment = split.treatment || 'Auto';
+    if(!isTrackedSpendCategoryV29(cat)) return 0;
+    return signedSpendFromAmountV29(t, split.amount, treatment);
+  }
+
+  function unsplitSpendImpactV29(t){
+    const cat = String(t.category || '');
+    if(!isTrackedSpendCategoryV29(cat)) return 0;
+    return signedSpendFromAmountV29(t, t.amount, treatmentV29(t));
+  }
+
+  // Category spend now uses split lines when they exist.
+  window.txSpendByCategory = function(cat){
+    return sum((app.transactions||[]).filter(t=>currentMonthV29(t)), t=>{
+      const splits = txSplitsV29(t);
+      if(splits.length){
+        return sum(splits.filter(s=>s.category===cat), s=>splitSpendImpactV29(t,s));
+      }
+      if(t.category === cat) return unsplitSpendImpactV29(t);
+      return 0;
+    });
+  };
+
+  // Transaction-level display impact:
+  // If split: sum all split impacts. If not split: old single-category impact.
+  window.transactionSpendAmount = function(t){
+    if(!currentMonthV29(t)) return 0;
+    const splits = txSplitsV29(t);
+    if(splits.length) return sum(splits, s=>splitSpendImpactV29(t,s));
+    return unsplitSpendImpactV29(t);
+  };
+
+  function debtPayoffExtraFromSplitsV29(){
+    return sum((app.transactions||[]).filter(t=>currentMonthV29(t)), t=>{
+      const splits = txSplitsV29(t);
+      if(splits.length){
+        return sum(splits.filter(s=>s.treatment==='Debt Payoff Extra' || s.category==='Debt Payoff'), s=>splitAmountV29(s));
+      }
+      // fallback: if unsplit Debt Payoff, count whole amount
+      if(t.category === 'Debt Payoff') return Math.abs(Number(t.amount)||0);
+      return 0;
+    });
+  }
+
+  function debtMinimumPaidFromSplitsV29(accountName){
+    return sum((app.transactions||[]).filter(t=>currentMonthV29(t)), t=>{
+      const splits = txSplitsV29(t);
+      if(splits.length){
+        return sum(splits.filter(s=>s.category===accountName && s.treatment==='Debt Payment'), s=>splitAmountV29(s));
+      }
+      return 0;
+    });
+  }
+
+  function sinkingContributionV29(fundName){
+    return sum((app.transactions||[]).filter(t=>currentMonthV29(t)), t=>{
+      const splits=txSplitsV29(t);
+      if(splits.length){
+        return sum(splits.filter(s=>s.category===fundName && s.treatment==='Sinking Fund Contribution'), s=>splitAmountV29(s));
+      }
+      if(t.category===fundName && treatmentV29(t)==='Sinking Fund Contribution') return Math.abs(Number(t.amount)||0);
+      return 0;
+    });
+  }
+
+  function categoriesV29(){
+    const base = (typeof categories === 'function' ? categories() : []);
+    const debtAccounts = [...(app.creditCards||[]).map(c=>c.name), ...(app.loans||[]).map(l=>l.name)];
+    return [...new Set([...base, ...debtAccounts, 'Debt Payoff'])].sort();
+  }
+
+  function treatmentOptionsV29(selected){
+    return SPLIT_TREATMENTS_V29.map(o=>`<option value="${esc(o)}" ${selected===o?'selected':''}>${esc(o)}</option>`).join('');
+  }
+
+  function categoryOptionsV29(selected){
+    return categoriesV29().map(c=>`<option value="${esc(c)}" ${selected===c?'selected':''}>${esc(c)}</option>`).join('');
+  }
+
+  function splitTotalV29(t){
+    return sum(txSplitsV29(t), s=>splitAmountV29(s));
+  }
+
+  function txAbsV29(t){
+    return Math.abs(Number(t.amount)||0);
+  }
+
+  function splitBalanceStatusV29(t){
+    const splits=txSplitsV29(t);
+    if(!splits.length) return '';
+    const total=splitTotalV29(t);
+    const diff=txAbsV29(t)-total;
+    const cls=Math.abs(diff)<0.01?'split-ok':'split-warning';
+    return `<div class="split-summary ${cls}">Split total ${money(total)} of ${money(txAbsV29(t))}${Math.abs(diff)>=0.01?` — difference ${money(diff)}`:' ✓'}</div>`;
+  }
+
+  function addDefaultSplitV29(t){
+    const amount=Math.abs(Number(t.amount)||0);
+    t.splits = [
+      {
+        category: t.category || 'Needs Review',
+        treatment: t.treatment || 'Auto',
+        amount: amount
+      }
+    ];
+  }
+
+  function addAppleDebtPayoffSplitV29(t){
+    const amount=Math.abs(Number(t.amount)||0);
+    const apple = (app.creditCards||[]).find(c=>String(c.name).toLowerCase().includes('apple card') && String(c.name).toLowerCase().includes('joe'));
+    const min = apple ? Number(apple.min)||0 : 0;
+    const extra = Math.max(0, amount-min);
+    t.splits = [
+      { category: apple ? apple.name : 'Apple Card - Joe', treatment: 'Debt Payment', amount: Math.min(amount,min) },
+      { category: 'Debt Payoff', treatment: 'Debt Payoff Extra', amount: extra }
+    ].filter(s=>s.amount>0);
+  }
+
+  window.addSplitV29 = function(id){
+    const t=(app.transactions||[]).find(x=>x.id===id);
+    if(!t) return;
+    if(!Array.isArray(t.splits)) t.splits=[];
+    t.splits.push({category:t.category || 'Needs Review', treatment:'Expense', amount:0});
+    renderTransactions();
+  };
+
+  window.autoSplitDebtPaymentV29 = function(id){
+    const t=(app.transactions||[]).find(x=>x.id===id);
+    if(!t) return;
+    addAppleDebtPayoffSplitV29(t);
+    t.category='Debt Payment';
+    t.treatment='Debt Payment';
+    renderTransactions();
+    if(typeof saveTransactionEdits === 'function') saveTransactionEdits();
+  };
+
+  window.clearSplitsV29 = function(id){
+    const t=(app.transactions||[]).find(x=>x.id===id);
+    if(!t) return;
+    if(confirm('Clear splits for this transaction?')){
+      t.splits=[];
+      renderTransactions();
+      if(typeof saveTransactionEdits === 'function') saveTransactionEdits();
+    }
+  };
+
+  function renderSplitEditorV29(t){
+    const splits=txSplitsV29(t);
+    if(!splits.length){
+      return `<div class="split-summary">
+        <button type="button" class="tiny-btn" onclick="addSplitV29('${esc(t.id)}')">Split</button>
+        ${String(t.description||'').toUpperCase().includes('APPLECARD') ? `<button type="button" class="tiny-btn" onclick="autoSplitDebtPaymentV29('${esc(t.id)}')">Auto-split Apple payment</button>` : ''}
+      </div>`;
+    }
+
+    return `<div class="split-box">
+      <b>Splits</b>
+      ${splits.map((s,i)=>`
+        <div class="split-line">
+          <select data-split-cat="${esc(t.id)}" data-split-idx="${i}">${categoryOptionsV29(s.category)}</select>
+          <select data-split-treatment="${esc(t.id)}" data-split-idx="${i}">${treatmentOptionsV29(s.treatment||'Auto')}</select>
+          <input type="number" step="0.01" data-split-amount="${esc(t.id)}" data-split-idx="${i}" value="${Number(s.amount)||0}">
+          <button type="button" class="tiny-btn" data-remove-split="${esc(t.id)}" data-split-idx="${i}">Remove</button>
+        </div>
+      `).join('')}
+      ${splitBalanceStatusV29(t)}
+      <button type="button" class="tiny-btn" onclick="addSplitV29('${esc(t.id)}')">Add line</button>
+      <button type="button" class="tiny-btn" onclick="clearSplitsV29('${esc(t.id)}')">Clear splits</button>
+    </div>`;
+  }
+
+  // Override transaction table to support split editor.
+  window.renderTransactions = function(){
+    const ownerFilter=document.getElementById('filterOwner').value;
+    const catFilter=document.getElementById('filterCategory').value;
+    const q=document.getElementById('searchTx').value.toLowerCase();
+    const showAll=document.getElementById('showAllMonths')?.checked;
+    const pageSize=Number(document.getElementById('pageSize')?.value)||50;
+
+    let list=(app.transactions||[]).filter(t=>{
+      const owner=t.owner||'Shared/Unknown';
+      const monthOk=showAll || currentMonthV29(t);
+      const text=(t.description+' '+(t.rawDescription||'')+' '+(t.category||'')).toLowerCase();
+      const splitCatMatch = txSplitsV29(t).some(s=>s.category===catFilter);
+      return monthOk &&
+        (!ownerFilter||owner===ownerFilter) &&
+        (!catFilter||t.category===catFilter||splitCatMatch) &&
+        (!q||text.includes(q));
+    }).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+
+    window.txPage = window.txPage || 1;
+    const pages=Math.max(1, Math.ceil(list.length/pageSize));
+    if(window.txPage>pages) window.txPage=pages;
+    const start=(window.txPage-1)*pageSize;
+    const page=list.slice(start,start+pageSize);
+
+    const catOpts=categoriesV29().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    let rows='<tr><th>Date</th><th>Source</th><th>Owner</th><th>Description</th><th>Category</th><th>Treatment</th><th class="num">Amount</th><th class="num">Budget Impact</th></tr>';
+    page.forEach(t=>{
+      const ownerSel=`<select data-owner="${esc(t.id)}"><option ${!t.owner?'selected':''}>Shared/Unknown</option><option ${t.owner==='Joe'?'selected':''}>Joe</option><option ${t.owner==='Katy'?'selected':''}>Katy</option></select>`;
+      const catSel=`<select data-cat="${esc(t.id)}">${catOpts}</select>`;
+      const treatmentSel=`<select data-treatment="${esc(t.id)}">${treatmentOptionsV29(treatmentV29(t))}</select>`;
+      const impact=transactionSpendAmount(t);
+      rows+=`<tr>
+        <td>${esc(t.date)}</td>
+        <td>${esc(t.source)}</td>
+        <td>${ownerSel}</td>
+        <td><b>${esc(t.description)}</b><div class="tiny">${esc(t.purchasedBy||'')}</div>${renderSplitEditorV29(t)}</td>
+        <td>${catSel}</td>
+        <td>${treatmentSel}</td>
+        <td class="num">${money(t.amount)}</td>
+        <td class="num ${impact<0?'ok':impact>0?'':'tiny'}">${money(impact)}</td>
+      </tr>`;
+    });
+
+    document.getElementById('txTable').innerHTML=rows;
+    document.querySelectorAll('[data-cat]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.cat);if(t)sel.value=t.category});
+
+    const pageInfo=document.querySelector('#transactions .toolbar + button, #transactions .page-info');
+    const existing=document.getElementById('paginationInfoV29');
+    if(existing) existing.textContent=`Page ${window.txPage} of ${pages} (${list.length} rows)`;
+  };
+
+  // Override save to capture split lines.
+  window.saveTransactionEdits = function(){
+    document.querySelectorAll('[data-cat]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.cat);if(t)t.category=sel.value});
+    document.querySelectorAll('[data-owner]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.owner);if(t)t.owner=sel.value==='Shared/Unknown'?'':sel.value});
+    document.querySelectorAll('[data-treatment]').forEach(sel=>{const t=app.transactions.find(x=>x.id===sel.dataset.treatment);if(t)t.treatment=sel.value});
+
+    // Capture split inputs.
+    const byTx={};
+    document.querySelectorAll('[data-split-cat]').forEach(sel=>{
+      const id=sel.dataset.splitCat, idx=Number(sel.dataset.splitIdx);
+      byTx[id]=byTx[id]||[];
+      byTx[id][idx]=byTx[id][idx]||{};
+      byTx[id][idx].category=sel.value;
+    });
+    document.querySelectorAll('[data-split-treatment]').forEach(sel=>{
+      const id=sel.dataset.splitTreatment, idx=Number(sel.dataset.splitIdx);
+      byTx[id]=byTx[id]||[];
+      byTx[id][idx]=byTx[id][idx]||{};
+      byTx[id][idx].treatment=sel.value;
+    });
+    document.querySelectorAll('[data-split-amount]').forEach(inp=>{
+      const id=inp.dataset.splitAmount, idx=Number(inp.dataset.splitIdx);
+      byTx[id]=byTx[id]||[];
+      byTx[id][idx]=byTx[id][idx]||{};
+      byTx[id][idx].amount=Number(inp.value)||0;
+    });
+    Object.keys(byTx).forEach(id=>{
+      const t=app.transactions.find(x=>x.id===id);
+      if(t) t.splits=byTx[id].filter(s=>s && s.category && Number(s.amount)!==0);
+    });
+
+    render();
+    if(typeof queueAutoSync === 'function') queueAutoSync('transaction edit/split update');
+    if(typeof pushToSheetDebounced === 'function') pushToSheetDebounced();
+  };
+
+  document.addEventListener('click', e=>{
+    const btn=e.target.closest('[data-remove-split]');
+    if(!btn) return;
+    const t=(app.transactions||[]).find(x=>x.id===btn.dataset.removeSplit);
+    if(!t || !Array.isArray(t.splits)) return;
+    t.splits.splice(Number(btn.dataset.splitIdx),1);
+    renderTransactions();
+  });
+
+  document.addEventListener('change', e=>{
+    if(e.target && (e.target.dataset.splitCat || e.target.dataset.splitTreatment || e.target.dataset.splitAmount)){
+      // Do not fully render on every numeric edit; save quietly after explicit Save or dropdown change.
+      if(!e.target.dataset.splitAmount) saveTransactionEdits();
+    }
+  });
+
+  // Personal views should exclude debt split transactions.
+  function shouldShowDecisionV29(t, owner){
+    if(!currentMonthV29(t)) return false;
+    if((t.owner||'')!==owner) return false;
+    if(['Income','Debt Payment','Loan Payment','Payment / Transfer','Transfer','Debt Payoff'].includes(String(t.category||''))) return false;
+    if(['Income','Ignore / Transfer','Debt Payment','Loan Payment','Debt Payoff Extra','Sinking Fund Contribution','Reimbursement / Credit'].includes(treatmentV29(t))) return false;
+    const impact=transactionSpendAmount(t);
+    return impact>0;
+  }
+
+  window.renderPersonalView = function(owner,id,budgetName){
+    const budget=getBudget(budgetName);
+    const spent=txSpendByCategory(budgetName);
+    const rem=budget-spent;
+    const ownerTx=(app.transactions||[]).filter(t=>shouldShowDecisionV29(t,owner)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,12);
+    document.getElementById(id).innerHTML =
+      `<div class="metrics" style="grid-template-columns:1fr 1fr">
+        <div class="metric"><div class="label">${owner} personal left</div><div class="value ${rem<0?'bad':rem<50?'warn':'ok'}">${money(rem)}</div></div>
+        <div class="metric"><div class="label">${owner} personal spent</div><div class="value">${money(spent)}</div></div>
+      </div>
+      <h3>${owner} Spending Decisions</h3>
+      <table><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Budget Impact</th></tr>
+      ${ownerTx.map(t=>`<tr><td>${esc(t.date)}</td><td>${esc(t.description)}${t.purchasedBy?`<div class="tiny">${esc(t.purchasedBy)}</div>`:''}</td><td>${esc(t.category)}</td><td class="num">${money(transactionSpendAmount(t))}</td></tr>`).join('') || '<tr><td colspan="4">No spending decisions for this month.</td></tr>'}
+      </table>
+      <div class="tiny">Shows groceries, household, kids, personal, date-night, and sinking-fund spending. Excludes income, transfers, bills, loan payments, and debt payments.</div>`;
+  };
+
+  // Patch sinking fund table: Debt Payoff position should use extra payment splits.
+  const oldRenderBudgetsV29 = window.renderBudgets;
+  window.renderBudgets = function(){
+    if(typeof oldRenderBudgetsV29==='function') oldRenderBudgetsV29();
+    const table=document.getElementById('sinkingTable');
+    if(!table) return;
+    table.innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned Monthly</th><th class="num">Actual / Contributed</th><th class="num">Spent This Month</th><th class="num">Current Position</th></tr>'+
+      (app.sinkingFunds||[]).map(f=>{
+        if(f.name==='Debt Payoff'){
+          const actual=debtPayoffExtraFromSplitsV29();
+          const planned=Number(f.budget)||0;
+          const pos=actual-planned;
+          return `<tr><td>${esc(f.name)}<div class="tiny">Extra principal above minimums</div></td><td class="num">${money(f.balance||0)}</td><td class="num">${money(planned)}</td><td class="num">${money(actual)}</td><td class="num">${money(actual)}</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`;
+        }
+        const spent=txSpendByCategory(f.name);
+        const contributed=sinkingContributionV29(f.name);
+        const position=(Number(f.balance)||0)+(Number(f.saved)||0)+contributed-spent;
+        return `<tr><td>${esc(f.name)}</td><td class="num">${money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money((Number(f.saved)||0)+contributed)}</td><td class="num">${money(spent)}</td><td class="num ${position<0?'bad':'ok'}">${money(position)}</td></tr>`;
+      }).join('');
+  };
+
+  const oldRenderDailyV29 = window.renderDaily;
+  window.renderDaily = function(){
+    if(typeof oldRenderDailyV29==='function') oldRenderDailyV29();
+    const table=document.getElementById('sinkingPositionTable');
+    if(table){
+      table.innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned</th><th class="num">Actual / Contributed</th><th class="num">Spent</th><th class="num">Position</th></tr>'+
+        (app.sinkingFunds||[]).map(f=>{
+          if(f.name==='Debt Payoff'){
+            const actual=debtPayoffExtraFromSplitsV29();
+            const planned=Number(f.budget)||0;
+            const pos=actual-planned;
+            return `<tr><td>${esc(f.name)}<div class="tiny">Extra principal above minimums</div></td><td class="num">${money(f.balance||0)}</td><td class="num">${money(planned)}</td><td class="num">${money(actual)}</td><td class="num">${money(actual)}</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`;
+          }
+          const spent=txSpendByCategory(f.name);
+          const contributed=sinkingContributionV29(f.name);
+          const position=(Number(f.balance)||0)+(Number(f.saved)||0)+contributed-spent;
+          return `<tr><td>${esc(f.name)}</td><td class="num">${money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money((Number(f.saved)||0)+contributed)}</td><td class="num">${money(spent)}</td><td class="num ${position<0?'bad':'ok'}">${money(position)}</td></tr>`;
+        }).join('');
+    }
+  };
+
+  // Add split helper note on transaction page if missing.
+  function addSplitNoticeV29(){
+    const txPanel=document.querySelector('#transactions .section');
+    if(!txPanel || document.getElementById('splitNoticeV29')) return;
+    const div=document.createElement('div');
+    div.id='splitNoticeV29';
+    div.className='notice';
+    div.innerHTML='<b>Split transactions:</b> use this for Costco/Amazon mixed purchases, reimbursements, and debt payments. For the $2,000 Apple payment, click <b>Auto-split Apple payment</b> to split $310.58 minimum + $1,689.42 extra debt payoff.';
+    txPanel.insertBefore(div, txPanel.firstChild);
+  }
+
+  addSplitNoticeV29();
+  try { if(typeof render==='function' && window.app) render(); } catch(e){ console.warn('v29 render skipped', e); }
 })();
 </script>
 
