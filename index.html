@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Fairman Family Budget Dashboard</title>
+<title>Fairman Family Budget Dashboard v26</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#f7f3ea;--card:#fffdf8;--ink:#263238;--muted:#667085;--line:#d0d5dd;--green:#dff4df;--pink:#f7dddd;--blue:#dbeafe;--cream:#fff7ed;--bad:#b42318;--warn:#b54708;--ok:#027a48;--dark:#263238}
@@ -1190,7 +1190,7 @@ render();
    To make the API URL work in incognito/for both Joe and Katy, paste your Apps Script Web App URL below.
    Example: const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/.../exec';
 */
-const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbysT2xDhbvC1TaYGlsO4hToKybCOx-roF1djJEtlH9AZeZdbbhOzigav1uJ2OFI1dMD/exec';
+const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbwWeIrtLmVkmWAUsppEiMhGVfFnzah0jUHbJRSW5wN3QxenI4hd3ic_KxRsPV_2LvIL/exec';
 
 save = function(){ /* no-op: Google Sheets is the database */ };
 load = function(){ return structuredClone ? structuredClone(initialData) : JSON.parse(JSON.stringify(initialData)); };
@@ -1920,6 +1920,317 @@ render();
   }
 
   try { updateLoadingLabelsV25(); if(typeof render === 'function' && window.app) render(); } catch(e) { console.warn('v25 rerender skipped', e); }
+})();
+</script>
+
+
+<style>
+/* v26 refinements */
+.metric .value.loading-value {
+  color:#667085 !important;
+}
+.metric .value.loading-value::after {
+  content:"";
+  display:inline-block;
+  width:34px;
+  height:11px;
+  margin-left:8px;
+  border-radius:999px;
+  background:linear-gradient(90deg,#e5e7eb,#f8fafc,#e5e7eb);
+  background-size:200% 100%;
+  animation:v26pulse 1.1s linear infinite;
+}
+@keyframes v26pulse { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+.month-tools {
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+  margin-top:10px;
+}
+.month-tools input {
+  max-width:160px;
+}
+</style>
+
+<script>
+/* ===== v26: fix bank spending impact, daily cards, metric-only loading, and month close tools ===== */
+
+(function(){
+  function currentMonthV26(t){
+    if(!t) return false;
+    if(typeof currentMonthTxV21 === 'function') return currentMonthTxV21(t);
+    if(typeof inBudgetMonth === 'function') return inBudgetMonth(t);
+    return String(t.date||'').slice(0,7) === app.month;
+  }
+
+  function treatmentV26(t){
+    if(typeof transactionTreatmentV21 === 'function') return transactionTreatmentV21(t);
+    return t.treatment || t.type || 'Auto';
+  }
+
+  function isBillNameV26(cat){
+    return (app.bills||[]).some(b=>b.name===cat);
+  }
+
+  function isDebtNameV26(cat){
+    return [...(app.creditCards||[]).map(c=>c.name), ...(app.loans||[]).map(l=>l.name)].includes(cat);
+  }
+
+  function isMonthlyBudgetCategoryV26(cat){
+    return (app.spendingBudgets||[]).some(b=>b.name===cat);
+  }
+
+  function isSinkingCategoryV26(cat){
+    return (app.sinkingFunds||[]).some(f=>f.name===cat);
+  }
+
+  function isTrackedCategoryV26(cat){
+    return isMonthlyBudgetCategoryV26(cat) || isSinkingCategoryV26(cat);
+  }
+
+  // Critical fix:
+  // Apple Card charges import as positive spending.
+  // Schwab/checking withdrawals import as negative spending.
+  // Schwab/checking deposits import as reimbursement/income.
+  window.transactionSpendAmount = function(t){
+    if(!currentMonthV26(t)) return 0;
+
+    const cat = String(t.category || '');
+    if(!isTrackedCategoryV26(cat)) return 0;
+
+    const treatment = treatmentV26(t);
+    const amount = Number(t.amount) || 0;
+    const src = String(t.source || t.account || '').toLowerCase();
+
+    if(['Ignore / Transfer','Income','Sinking Fund Contribution'].includes(treatment)) return 0;
+    if(treatment === 'Reimbursement / Credit') return -Math.abs(amount);
+    if(treatment === 'Expense') return Math.abs(amount);
+
+    // Auto mode:
+    // Apple/Card purchases are positive; credits/payments are negative.
+    if(src.includes('apple') || src.includes('card')) {
+      return amount > 0 ? amount : 0;
+    }
+
+    // Bank/checking spending is negative; positive is income/reimbursement.
+    return amount < 0 ? Math.abs(amount) : -Math.abs(amount);
+  };
+
+  window.txSpendByCategory = function(cat){
+    return sum((app.transactions||[]).filter(t=>t.category===cat), t=>transactionSpendAmount(t));
+  };
+
+  function sinkingFundContributionAmountV26(fundName){
+    return sum((app.transactions||[]).filter(t =>
+      currentMonthV26(t) &&
+      t.category === fundName &&
+      treatmentV26(t) === 'Sinking Fund Contribution'
+    ), t => Math.abs(Number(t.amount)||0));
+  }
+
+  function sinkingFundPositionV26(f){
+    return (Number(f.balance)||0) + (Number(f.saved)||0) + sinkingFundContributionAmountV26(f.name) - txSpendByCategory(f.name);
+  }
+
+  function shouldShowSpendingDecisionV26(t, owner){
+    if(!t || !currentMonthV26(t)) return false;
+    if((t.owner || '') !== owner) return false;
+
+    const cat = String(t.category || '');
+    const treatment = treatmentV26(t);
+
+    if(['Income','Debt Payment','Loan Payment','Payment / Transfer','Transfer'].includes(cat)) return false;
+    if(['Income','Ignore / Transfer','Sinking Fund Contribution','Reimbursement / Credit'].includes(treatment)) return false;
+    if(isBillNameV26(cat)) return false;
+    if(isDebtNameV26(cat)) return false;
+    if(!isTrackedCategoryV26(cat)) return false;
+
+    return transactionSpendAmount(t) > 0;
+  }
+
+  function sortNewestV26(a,b){
+    const ad=String(a.date||''), bd=String(b.date||'');
+    if(ad!==bd) return bd.localeCompare(ad);
+    const ap=String(a.posted||''), bp=String(b.posted||'');
+    if(ap!==bp) return bp.localeCompare(ap);
+    return String(b.id||'').localeCompare(String(a.id||''));
+  }
+
+  window.renderPersonalView = function(owner,id,budgetName){
+    const budget = getBudget(budgetName);
+    const spent = txSpendByCategory(budgetName);
+    const rem = budget - spent;
+
+    const ownerTx = (app.transactions || [])
+      .filter(t => shouldShowSpendingDecisionV26(t, owner))
+      .sort(sortNewestV26)
+      .slice(0,12);
+
+    document.getElementById(id).innerHTML =
+      `<div class="metrics" style="grid-template-columns:1fr 1fr">
+        <div class="metric">
+          <div class="label">${owner} personal left</div>
+          <div class="value ${rem<0?'bad':rem<50?'warn':'ok'}">${money(rem)}</div>
+        </div>
+        <div class="metric">
+          <div class="label">${owner} personal spent</div>
+          <div class="value">${money(spent)}</div>
+        </div>
+      </div>
+      <h3>${owner} Spending Decisions</h3>
+      <table>
+        <tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Budget Impact</th></tr>
+        ${
+          ownerTx.map(t => {
+            const impact = transactionSpendAmount(t);
+            const sourceNote = t.purchasedBy ? `<div class="tiny">${esc(t.purchasedBy)}</div>` : '';
+            return `<tr>
+              <td>${esc(t.date)}</td>
+              <td>${esc(t.description)}${sourceNote}</td>
+              <td>${esc(t.category)}</td>
+              <td class="num">${money(impact)}</td>
+            </tr>`;
+          }).join('') || '<tr><td colspan="4">No spending decisions for this month.</td></tr>'
+        }
+      </table>
+      <div class="tiny">Shows groceries, household, kids, personal, date-night, and sinking-fund spending. Excludes income, transfers, bills, loan payments, and debt payments.</div>`;
+  };
+
+  // Metric-only loading: no full-page blocker. This runs before/while sheet data is loading.
+  function setMetricLoadingV26(){
+    const top=document.getElementById('topMetrics');
+    if(top && !top.dataset.loaded){
+      top.innerHTML = [
+        'Checking now','Monthly spend left','Sinking fund net','Needs review',
+        'Sheet sync','Budget month','Current-month tx','Latest Schwab balance row'
+      ].map(label=>`<div class="metric"><div class="label">${label}</div><div class="value loading-value">Loading</div></div>`).join('');
+    }
+  }
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', setMetricLoadingV26, {once:true});
+  } else {
+    setMetricLoadingV26();
+  }
+
+  // Add month management controls to Import tab.
+  function addMonthToolsV26(){
+    const importSection = document.querySelector('#import .section');
+    if(!importSection || document.getElementById('monthCloseToolsV26')) return;
+    const div = document.createElement('div');
+    div.id = 'monthCloseToolsV26';
+    div.className = 'notice';
+    div.innerHTML = `
+      <h3>Month Management</h3>
+      <div class="small">
+        Use this at month-end. It writes a snapshot row to <b>Monthly Snapshots</b>, updates sinking fund carried balances,
+        and lets the next month start clean while old transactions remain historical.
+      </div>
+      <div class="month-tools">
+        <label>Next Month <input id="nextMonthV26" type="month" value="${nextMonthStringV26(app.month || '2026-06')}"></label>
+        <button type="button" id="closeMonthBtnV26" class="primary">Close Current Month</button>
+        <button type="button" id="setMonthBtnV26">Set Budget Month Only</button>
+        <span id="monthToolStatusV26" class="small"></span>
+      </div>`;
+    importSection.appendChild(div);
+    document.getElementById('closeMonthBtnV26').addEventListener('click', closeMonthV26);
+    document.getElementById('setMonthBtnV26').addEventListener('click', setMonthOnlyV26);
+  }
+
+  function nextMonthStringV26(month){
+    const [y,m] = String(month).split('-').map(Number);
+    const d = new Date(y, (m||1), 1);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  }
+
+  async function closeMonthV26(){
+    const nextMonth = document.getElementById('nextMonthV26').value;
+    const status = document.getElementById('monthToolStatusV26');
+    if(!nextMonth) return alert('Choose next month first.');
+    if(!confirm(`Close ${app.month} and start ${nextMonth}?`)) return;
+    status.textContent = 'Closing month…';
+
+    // Build a snapshot in the frontend so even older Apps Script can accept it if patched.
+    const snapshot = {
+      month: app.month,
+      closedAt: new Date().toISOString(),
+      checkingBalance: app.latestSchwabBalance || 0,
+      totalIncome: sum((app.transactions||[]).filter(t=>currentMonthV26(t) && (t.category==='Income' || Number(t.amount)>0)), t=>Number(t.amount)||0),
+      monthlyBudgetSpent: sum((app.spendingBudgets||[]), b=>txSpendByCategory(b.name)),
+      sinkingFundSpent: sum((app.sinkingFunds||[]), f=>txSpendByCategory(f.name)),
+      sinkingFundPositions: (app.sinkingFunds||[]).map(f=>({name:f.name, position:sinkingFundPositionV26(f)})),
+      creditCardDebt: sum((app.creditCards||[]), c=>Math.abs(Number(c.owed)||0)),
+      loanDebt: sum((app.loans||[]), l=>Math.abs(Number(l.owed)||0))
+    };
+
+    try{
+      if(typeof sheetApiPost === 'function'){
+        await sheetApiPost({action:'closeMonth', nextMonth, snapshot});
+      } else if(typeof postToSheet === 'function'){
+        await postToSheet({action:'closeMonth', nextMonth, snapshot});
+      } else if(typeof pushToSheet === 'function'){
+        app.month = nextMonth;
+        await pushToSheet();
+      } else {
+        app.month = nextMonth;
+      }
+
+      // Optimistic local update for immediate display after server closes month.
+      (app.sinkingFunds||[]).forEach(f=>{
+        f.balance = sinkingFundPositionV26(f);
+        f.saved = 0;
+      });
+      app.month = nextMonth;
+      status.textContent = 'Month closed ✓';
+      if(typeof loadFromSheet === 'function') await loadFromSheet();
+      render();
+    } catch(e){
+      console.error(e);
+      status.textContent = 'Close failed: ' + (e.message || e);
+      alert('Month close failed. Check Apps Script deployment and Code.gs version.');
+    }
+  }
+
+  async function setMonthOnlyV26(){
+    const nextMonth = document.getElementById('nextMonthV26').value;
+    const status = document.getElementById('monthToolStatusV26');
+    if(!nextMonth) return;
+    status.textContent = 'Updating month…';
+    try{
+      app.month = nextMonth;
+      if(typeof pushToSheet === 'function') await pushToSheet();
+      status.textContent = 'Budget month updated ✓';
+      render();
+    }catch(e){
+      console.error(e);
+      status.textContent = 'Update failed';
+    }
+  }
+
+  // Patch renderDaily too so top metrics mark loaded and fund net uses corrected calculations.
+  const originalRenderDailyV26 = window.renderDaily;
+  window.renderDaily = function(){
+    if(typeof originalRenderDailyV26 === 'function') originalRenderDailyV26();
+
+    const top=document.getElementById('topMetrics');
+    if(top) top.dataset.loaded='true';
+
+    // Rebuild sinking table with corrected negative/positive impact from bank withdrawals.
+    const table=document.getElementById('sinkingPositionTable');
+    if(table){
+      const rows=(app.sinkingFunds||[]).map(f=>{
+        const spent=txSpendByCategory(f.name);
+        const position=sinkingFundPositionV26(f);
+        return {name:f.name,balance:f.balance,budget:f.budget,saved:f.saved,spent,position};
+      }).sort((a,b)=>a.position-b.position);
+
+      table.innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned</th><th class="num">Saved</th><th class="num">Spent</th><th class="num">Position</th></tr>'+
+        rows.map(f=>`<tr><td>${esc(f.name)}</td><td class="num">${money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(f.saved)}</td><td class="num">${money(f.spent)}</td><td class="num ${f.position<0?'bad':'ok'}">${money(f.position)}</td></tr>`).join('');
+    }
+  };
+
+  addMonthToolsV26();
+  try { if(typeof render === 'function' && window.app) render(); } catch(e) { console.warn('v26 render skipped', e); }
 })();
 </script>
 
