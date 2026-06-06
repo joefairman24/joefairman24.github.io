@@ -17,6 +17,11 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  var __payloadV26 = JSON.parse(e.postData.contents || '{}');
+  if (__payloadV26.action === 'closeMonth') {
+    return ContentService.createTextOutput(JSON.stringify(closeMonthV26_(__payloadV26))).setMimeType(ContentService.MimeType.JSON);
+  }
+
   try {
     const payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     const action = payload.action || 'getAll';
@@ -227,6 +232,8 @@ function buildAppFromSheet() {
       purchasedBy: String(getValue(r, ['Purchased By'], '')),
       category: fund || category || String(getValue(r, ['Type'], 'Needs Review')),
       treatment: String(getValue(r, ['Treatment'], 'Auto')),
+      splits: parseSplitsV29_(getValue(r, ['Splits'], '')),
+      splits: parseSplitsV29_(getValue(r, ['Splits'], '')),
       runningBalance: getValue(r, ['Running Balance', 'Balance After', 'RunningBalance'], '') === '' ? undefined : asNum(getValue(r, ['Running Balance', 'Balance After', 'RunningBalance'], ''))
     };
   }).filter(t => t.date || t.description || t.amount);
@@ -366,7 +373,7 @@ function saveTransactions(transactions) {
 
   const headers = [
     'Transaction ID', 'Date', 'Imported Date', 'Account', 'Description', 'Merchant',
-    'Amount', 'Type', 'Treatment', 'Category', 'Fund', 'Month', 'Reviewed', 'Notes',
+    'Amount', 'Type', 'Treatment', 'Category', 'Fund', 'Month', 'Reviewed', 'Notes', 'Splits',
     'Owner', 'Source', 'Posted', 'Purchased By', 'Raw Description', 'Running Balance'
   ];
 
@@ -389,6 +396,8 @@ function saveTransactions(transactions) {
       month,
       true,
       t.notes || '',
+      stringifySplitsV29_(t.splits),
+      stringifySplitsV29_(t.splits),
       t.owner || '',
       t.source || '',
       t.posted || '',
@@ -403,4 +412,78 @@ function saveTransactions(transactions) {
   if (rows.length) sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
   sh.autoResizeColumns(1, headers.length);
   return rows.length;
+}
+
+
+/**
+ * v26 month close endpoint.
+ * Expected payload:
+ * { action:'closeMonth', nextMonth:'YYYY-MM', snapshot:{...} }
+ */
+function closeMonthV26_(payload) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var nextMonth = String(payload.nextMonth || '').trim();
+  var snapshot = payload.snapshot || {};
+  if (!nextMonth) throw new Error('Missing nextMonth');
+
+  var settings = ss.getSheetByName('Settings');
+  if (settings) {
+    var values = settings.getDataRange().getValues();
+    for (var i = 0; i < values.length; i++) {
+      if (String(values[i][0]).trim().toLowerCase() === 'current month') {
+        settings.getRange(i + 1, 2).setValue(nextMonth);
+      }
+    }
+  }
+
+  var snapSheet = ss.getSheetByName('Monthly Snapshots') || ss.insertSheet('Monthly Snapshots');
+  if (snapSheet.getLastRow() === 0) {
+    snapSheet.appendRow([
+      'Month','Closed At','Income','Bills','General Spending','Sinking Funds',
+      'Debt Payments','Net Cash Flow','Credit Card Debt','Loan Debt','Checking Balance','Snapshot JSON'
+    ]);
+  }
+
+  snapSheet.appendRow([
+    snapshot.month || '',
+    snapshot.closedAt || new Date(),
+    snapshot.totalIncome || 0,
+    snapshot.bills || 0,
+    snapshot.monthlyBudgetSpent || 0,
+    snapshot.sinkingFundSpent || 0,
+    snapshot.debtPayments || 0,
+    snapshot.netCashFlow || 0,
+    snapshot.creditCardDebt || 0,
+    snapshot.loanDebt || 0,
+    snapshot.checkingBalance || 0,
+    JSON.stringify(snapshot)
+  ]);
+
+  // Carry sinking fund positions into Current Balance and reset Saved to 0 where columns exist.
+  var funds = ss.getSheetByName('Sinking Funds');
+  if (funds && snapshot.sinkingFundPositions) {
+    var data = funds.getDataRange().getValues();
+    if (data.length > 1) {
+      var headers = data[0].map(function(h){ return String(h).trim().toLowerCase(); });
+      var nameCol = headers.indexOf('fund name');
+      if (nameCol < 0) nameCol = headers.indexOf('category');
+      if (nameCol < 0) nameCol = headers.indexOf('fund');
+      var balCol = headers.indexOf('current balance');
+      if (balCol < 0) balCol = headers.indexOf('balance');
+      var savedCol = headers.indexOf('saved');
+      var positions = {};
+      snapshot.sinkingFundPositions.forEach(function(p){ positions[String(p.name)] = Number(p.position) || 0; });
+      for (var r = 1; r < data.length; r++) {
+        var nm = String(data[r][nameCol]);
+        if (positions.hasOwnProperty(nm) && balCol >= 0) {
+          funds.getRange(r + 1, balCol + 1).setValue(positions[nm]);
+        }
+        if (savedCol >= 0) {
+          funds.getRange(r + 1, savedCol + 1).setValue(0);
+        }
+      }
+    }
+  }
+
+  return { ok:true, nextMonth:nextMonth };
 }
