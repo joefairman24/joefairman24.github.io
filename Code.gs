@@ -365,6 +365,7 @@ function updateReceivedPaychecks(transactions) {
   }
 }
 
+
 function saveTransactions(transactions) {
   const sheetName = 'Transactions';
   let sh = getSheet(sheetName);
@@ -373,27 +374,34 @@ function saveTransactions(transactions) {
   const headers = [
     'Transaction ID', 'Date', 'Imported Date', 'Account', 'Description', 'Merchant',
     'Amount', 'Type', 'Treatment', 'Category', 'Fund', 'Month', 'Reviewed', 'Notes', 'Splits',
-    'Owner', 'Source', 'Posted', 'Purchased By', 'Raw Description', 'Running Balance'
+    'Owner', 'Source', 'Posted', 'Purchased By', 'Raw Description', 'Running Balance', 'Import Batch ID'
   ];
 
-  const rows = (transactions || []).map(t => {
+  if (sh.getMaxColumns() < headers.length) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), headers.length - sh.getMaxColumns());
+  }
+  sh.clearContents();
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+
+  transactions = transactions || [];
+  const rows = transactions.map(t => {
     const category = String(t.category || '');
     const type = ['Debt Payment','Loan Payment','Payment / Transfer','Income'].includes(category) ? category : 'Expense';
     const month = monthFromDate(t.date, '');
     return [
-      t.id || Utilities.getUuid(),
+      t.id || t.transactionId || Utilities.getUuid(),
       t.date || '',
-      t.posted || '',
+      t.importedDate || t.posted || '',
       t.account || '',
       t.description || '',
       t.merchant || '',
       asNum(t.amount),
-      type,
+      t.type || type,
       t.treatment || 'Auto',
-      category,
+      category || 'Needs Review',
       t.fund || '',
-      month,
-      true,
+      t.month || month,
+      t.reviewed === false ? false : true,
       t.notes || '',
       stringifySplitsV29_(t.splits),
       t.owner || '',
@@ -401,17 +409,20 @@ function saveTransactions(transactions) {
       t.posted || '',
       t.purchasedBy || '',
       t.rawDescription || t.description || '',
-      t.runningBalance === undefined || t.runningBalance === null || t.runningBalance === '' ? '' : asNum(t.runningBalance)
+      t.runningBalance === undefined || t.runningBalance === null || t.runningBalance === '' ? '' : asNum(t.runningBalance),
+      t.importBatchId || ''
     ];
   });
 
-  sh.clearContents();
-  if (sh.getMaxColumns() < headers.length) sh.insertColumnsAfter(sh.getMaxColumns(), headers.length - sh.getMaxColumns());
-  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
   if (rows.length) sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
-  sh.autoResizeColumns(1, headers.length);
+  sh.autoResizeColumns(1, Math.min(headers.length, 12));
+
+  updateReceivedPaychecks(transactions);
+  updateSettingsLatestBalanceV36_(transactions);
+  updatePaidStatusSheetsV36_(transactions);
   return rows.length;
 }
+
 
 
 /**
@@ -487,17 +498,133 @@ function closeMonthV26_(payload) {
   return { ok:true, nextMonth:nextMonth };
 }
 
-
 function parseSplitsV29_(value) {
   if (value === null || value === undefined || value === '') return [];
-  try {
-    const parsed = JSON.parse(String(value));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    return [];
-  }
+  try { var parsed = JSON.parse(String(value)); return Array.isArray(parsed) ? parsed : []; } catch (err) { return []; }
 }
 function stringifySplitsV29_(splits) {
   if (!splits || !Array.isArray(splits) || splits.length === 0) return '';
   return JSON.stringify(splits);
+}
+
+
+function normalizeTextV36_(s) {
+  return String(s || '').toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function isCurrentMonthTxV36_(t, month) {
+  return String(t.date || '').substring(0, 7) === month;
+}
+function latestSchwabBalanceV36_(transactions) {
+  const month = getSettingMonthV36_();
+  const tx = (transactions || []).map((t, i) => ({t, i})).filter(x => {
+    const src = String((x.t.source || '') + ' ' + (x.t.account || '')).toLowerCase();
+    return isCurrentMonthTxV36_(x.t, month) && src.includes('schwab');
+  });
+  const withRb = tx.filter(x => x.t.runningBalance !== undefined && x.t.runningBalance !== null && x.t.runningBalance !== '' && !isNaN(Number(x.t.runningBalance)));
+  if (!withRb.length) return null;
+  withRb.sort((a,b) => {
+    const d = String(b.t.date || '').localeCompare(String(a.t.date || '')); if (d) return d;
+    const p = String(b.t.posted || '').localeCompare(String(a.t.posted || '')); if (p) return p;
+    return a.i - b.i;
+  });
+  const base = withRb[0];
+  let balance = asNum(base.t.runningBalance);
+  tx.forEach(x => {
+    const hasRb = x.t.runningBalance !== undefined && x.t.runningBalance !== null && x.t.runningBalance !== '' && !isNaN(Number(x.t.runningBalance));
+    if (hasRb) return;
+    const newerDate = String(x.t.date || '') > String(base.t.date || '');
+    const sameDateNewer = String(x.t.date || '') === String(base.t.date || '') && x.i < base.i;
+    if (newerDate || sameDateNewer) balance += asNum(x.t.amount);
+  });
+  return balance;
+}
+function getSettingMonthV36_() {
+  const settings = getSheet('Settings');
+  if (!settings) return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM');
+  const values = settings.getDataRange().getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0]).trim().toLowerCase() === 'current month') return String(values[i][1]).trim();
+  }
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM');
+}
+function setKeyValueV36_(sheetName, key, value) {
+  const sh = getSheet(sheetName); if (!sh) return;
+  const values = sh.getDataRange().getValues();
+  for (let r = 0; r < values.length; r++) {
+    if (String(values[r][0]).trim().toLowerCase() === String(key).trim().toLowerCase()) {
+      sh.getRange(r + 1, 2).setValue(value); return;
+    }
+  }
+  sh.appendRow([key, value]);
+}
+function updateSettingsLatestBalanceV36_(transactions) {
+  const bal = latestSchwabBalanceV36_(transactions);
+  if (bal === null) return;
+  setKeyValueV36_('Settings', 'Latest Schwab Balance', bal);
+  const accounts = getSheet('Accounts');
+  if (!accounts) return;
+  const values = accounts.getDataRange().getValues(); if (values.length < 2) return;
+  const headers = values[0].map(h => String(h).trim());
+  const nameCol = headers.indexOf('Name'); const balCol = headers.indexOf('Current Balance');
+  if (nameCol < 0 || balCol < 0) return;
+  for (let r = 1; r < values.length; r++) {
+    if (String(values[r][nameCol]).toLowerCase().includes('schwab checking')) accounts.getRange(r + 1, balCol + 1).setValue(bal);
+  }
+}
+function paymentKeywordsV36_(item) {
+  let keys = (item.paymentKeywords || []).slice();
+  const name = String(item.name || '').toUpperCase();
+  if (name.includes('APPLE CARD')) keys = keys.concat(['APPLECARD GSBANK','APPLECARD','APPLE CARD']);
+  if (name.includes('BEST BUY')) keys = keys.concat(['BEST BUY']);
+  if (name.includes('LOWES')) keys = keys.concat(['LOWES','LOWE']);
+  if (name.includes('CHASE') || name.includes('AMAZON PRIME')) keys = keys.concat(['CHASE CREDIT CRD','CHASE CREDIT','CHASE','AMAZON PRIME VISA']);
+  if (name.includes('U.S. BANK') || name.includes('US BANK')) keys = keys.concat(['US BANK','U S BANK','U.S. BANK']);
+  if (name.includes('MORTGAGE') || name.includes('NAVY FEDERAL')) keys = keys.concat(['NFCU MORT DEBIT','NAVY FEDERAL']);
+  if (name.includes('HELOC')) keys = keys.concat(['NFCU MORT DEBIT','HELOC']);
+  if (name.includes('BRIDGECREST')) keys = keys.concat(['BRIDGECREST']);
+  if (name.includes('WELLS FARGO')) keys = keys.concat(['WELLS FARGO']);
+  return Array.from(new Set(keys.map(k => normalizeTextV36_(k)).filter(k => k.length >= 4)));
+}
+function paidMapV36_(items, transactions, typeName) {
+  const out = {}; items.forEach(i => out[i.name] = 0);
+  const month = getSettingMonthV36_();
+  (transactions || []).forEach(t => {
+    if (!isCurrentMonthTxV36_(t, month)) return;
+    const d = normalizeTextV36_((t.rawDescription || '') + ' ' + (t.description || ''));
+    const cat = String(t.category || ''); const tr = String(t.treatment || '');
+    if (typeName === 'Debt Payment' && !(cat === 'Debt Payment' || tr === 'Debt Payment' || /APPLECARD|BEST BUY|LOWES|CHASE CREDIT CRD|US BANK/.test(d))) return;
+    if (typeName === 'Loan Payment' && !(cat === 'Loan Payment' || tr === 'Loan Payment' || /NFCU MORT|BRIDGECREST|WELLS FARGO|APPLE WATCH/.test(d))) return;
+    const amt = Math.abs(asNum(t.amount)); if (!amt) return;
+    const matches = items.filter(item => paymentKeywordsV36_(item).some(k => d.includes(k)));
+    if (!matches.length) return;
+    let winner = matches[0], best = Math.abs(amt - asNum(matches[0].expected || matches[0].min || matches[0].amount));
+    matches.forEach(item => { const diff = Math.abs(amt - asNum(item.expected || item.min || item.amount)); if (diff < best) { winner = item; best = diff; } });
+    out[winner.name] += amt;
+  });
+  return out;
+}
+function updatePaidStatusSheetsV36_(transactions) {
+  // Build current account/bill objects from sheet using existing builder pieces.
+  const app = buildAppFromSheet();
+  const cardPaid = paidMapV36_(app.creditCards || [], transactions, 'Debt Payment');
+  const loanPaid = paidMapV36_(app.loans || [], transactions, 'Loan Payment');
+  // Mark paycheck Received based on transactions.
+  updateReceivedPaychecks(transactions);
+  // Optional: if Accounts has Amount Paid / Confirmed Paid columns, update them.
+  const accounts = getSheet('Accounts');
+  if (accounts) {
+    const vals = accounts.getDataRange().getValues();
+    if (vals.length > 1) {
+      const h = vals[0].map(x => String(x).trim());
+      const nameCol = h.indexOf('Name');
+      let paidCol = h.indexOf('Amount Paid'); if (paidCol < 0) paidCol = h.indexOf('Confirmed Paid');
+      if (nameCol >= 0 && paidCol >= 0) {
+        for (let r = 1; r < vals.length; r++) {
+          const name = String(vals[r][nameCol]);
+          if (cardPaid[name] !== undefined) accounts.getRange(r + 1, paidCol + 1).setValue(cardPaid[name] || 0);
+          if (loanPaid[name] !== undefined) accounts.getRange(r + 1, paidCol + 1).setValue(loanPaid[name] || 0);
+        }
+      }
+    }
+  }
 }

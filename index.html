@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Fairman Family Budget Dashboard v35 Stable</title>
+<title>Fairman Family Budget Dashboard v36 Stable</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#f7f3ea;--card:#fffdf8;--ink:#263238;--muted:#667085;--line:#d0d5dd;--green:#dff4df;--pink:#f7dddd;--blue:#dbeafe;--cream:#fff7ed;--bad:#b42318;--warn:#b54708;--ok:#027a48;--dark:#263238}
@@ -40,7 +40,7 @@ body.loading main{opacity:1!important;pointer-events:auto!important}
 
 </head>
 <body>
-<header><h1>Fairman Family Budget Dashboard v35 Stable</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+<header><h1>Fairman Family Budget Dashboard v36 Stable</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 
 </div>
 <main>
@@ -1209,7 +1209,7 @@ render();
    To make the API URL work in incognito/for both Joe and Katy, paste your Apps Script Web App URL below.
    Example: const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/.../exec';
 */
-const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbx1ctBLZCeA7kxf7jQXCXbCo7vM9hx5cQH6em-7lnwmDl0Xpe7CLUxnSLnE0NqxLSPN/exec';
+const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbzZV0hPGiWehLkAkJm15z4vUB3utNCt85DwpoWj6hfCmxREyEZmvQVkDiXwlNdjAudR/exec';
 
 save = function(){ /* no-op: Google Sheets is the database */ };
 load = function(){ return structuredClone ? structuredClone(initialData) : JSON.parse(JSON.stringify(initialData)); };
@@ -2984,328 +2984,215 @@ button.tiny-btn {
 
 
 <script>
-/* ===== v35 STABLE REPAIR =====
-   This intentionally runs last and does not remove prior features.
-   It fixes the visible render path, CSV import, split capture, push-to-sheet, duplicate metrics, and checking balance.
+/* ===== v36 stable repair from v15 baseline =====
+   Stop patch drift by overriding only the final calculation/render/save paths.
+   Fixes:
+   - checking balance includes same-day newer Schwab rows without running balance
+   - cards/loans/bills paid status calculated from transactions, not stale sheet flags
+   - cashflow uses those calculated paid amounts
+   - CSV import button listener stays attached
+   - split values are preserved for saveAll
 */
 (function(){
-  const V35_API_URL = 'https://script.google.com/macros/s/.../exec';
-  const VARIABLE_NAMES = new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']);
-  const NON_SPEND_CATS = new Set(['Debt Payment','Loan Payment','Payment / Transfer','Income','Transfer']);
-  const NON_SPEND_TREATMENTS = new Set(['Income','Ignore / Transfer','Debt Payment','Loan Payment','Sinking Fund Contribution']);
-
+  const V36_MIN_BUFFER = 2500;
   function n(v){ const x=Number(String(v??'').replace(/[$,]/g,'')); return Number.isFinite(x)?x:0; }
-  function month(){ return String(app?.month || '2026-06'); }
+  function abs(v){ return Math.abs(n(v)); }
+  function month(){ return String(app?.month || '').trim(); }
   function inMonth(t){ return String(t?.date || '').slice(0,7) === month(); }
+  window.inBudgetMonth = inMonth;
+  window.currentMonthTxV21 = inMonth;
+  function desc(t){ return String((t?.rawDescription||'')+' '+(t?.description||'')).toUpperCase(); }
   function isSchwab(t){ return String((t?.source||'')+' '+(t?.account||'')).toLowerCase().includes('schwab'); }
-  function splits(t){ return Array.isArray(t?.splits) ? t.splits : []; }
   function treatment(t){ return t?.treatment || t?.type || 'Auto'; }
-  function splitTreatment(s){ return s?.treatment || 'Auto'; }
+  function splits(t){ return Array.isArray(t?.splits) ? t.splits : []; }
+  function latestSchwabInfo(){
+    const tx=(app.transactions||[]).map((t,i)=>({t,i})).filter(x=>inMonth(x.t)&&isSchwab(x.t));
+    // choose the newest Schwab row with a real runningBalance
+    const withRb=tx.filter(x=>x.t.runningBalance!==undefined && x.t.runningBalance!==null && x.t.runningBalance!=='' && !Number.isNaN(Number(x.t.runningBalance)));
+    if(!withRb.length) return {balance:n(app.latestSchwabBalance), base:null, applied:[]};
+    withRb.sort((a,b)=>{
+      const d=String(b.t.date||'').localeCompare(String(a.t.date||'')); if(d) return d;
+      const p=String(b.t.posted||'').localeCompare(String(a.t.posted||'')); if(p) return p;
+      // imported bank files usually show newest same-day rows first; lower index is later/currenter in the dashboard view
+      return a.i-b.i;
+    });
+    const base=withRb[0];
+    let balance=n(base.t.runningBalance);
+    // Apply same-day or later Schwab transactions that appear before the latest running-balance row and have no running balance.
+    // This fixes cases like Chase autopay appearing above the Lowes running-balance row on 2026-06-08.
+    const applied=[];
+    tx.forEach(x=>{
+      const hasRb=x.t.runningBalance!==undefined && x.t.runningBalance!==null && x.t.runningBalance!=='' && !Number.isNaN(Number(x.t.runningBalance));
+      if(hasRb) return;
+      const newerDate=String(x.t.date||'') > String(base.t.date||'');
+      const sameDateNewer=String(x.t.date||'') === String(base.t.date||'') && x.i < base.i;
+      if(newerDate || sameDateNewer){ balance += n(x.t.amount); applied.push(x.t); }
+    });
+    return {balance, base:base.t, applied};
+  }
+  window.currentCheckingBalance = function(){ const info=latestSchwabInfo(); app.latestSchwabBalance=info.balance; return info.balance; };
+  window.currentCheckingBalanceV21 = window.currentCheckingBalance;
+
+  function isAppleCardLike(t){ const s=String((t?.source||'')+' '+(t?.account||'')).toLowerCase(); return s.includes('apple') || (s.includes('card') && !s.includes('schwab')); }
+  function variableNecessities(){ return new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']); }
   function isBudget(cat){ return (app.spendingBudgets||[]).some(b=>b.name===cat); }
   function isFund(cat){ return (app.sinkingFunds||[]).some(f=>f.name===cat); }
-  function isTracked(cat){ return isBudget(cat) || isFund(cat) || VARIABLE_NAMES.has(String(cat||'')); }
-  function isFixedBill(cat){ return (app.bills||[]).some(b=>b.name===cat) && !VARIABLE_NAMES.has(cat); }
-  function creditLoanNames(){ return new Set([...(app.creditCards||[]).map(c=>c.name), ...(app.loans||[]).map(l=>l.name)]); }
-  function isCardLike(t){ const s=String((t.source||'')+' '+(t.account||'')).toLowerCase(); return s.includes('apple') || (s.includes('card') && !s.includes('schwab')); }
-  function impactFromAmount(t, amount, treat){
-    amount = n(amount);
-    if(treat==='Reimbursement / Credit') return -Math.abs(amount);
-    if(treat==='Expense' || treat==='Debt Payoff Extra') return Math.abs(amount);
-    if(NON_SPEND_TREATMENTS.has(treat)) return 0;
-    if(isCardLike(t)) return amount > 0 ? amount : 0;
-    return amount < 0 ? Math.abs(amount) : -Math.abs(amount);
+  function tracked(cat){ return isBudget(cat)||isFund(cat)||variableNecessities().has(String(cat||'')); }
+  function spendFrom(t, amount, tr){
+    amount=n(amount);
+    if(['Ignore / Transfer','Income','Sinking Fund Contribution','Debt Payment','Loan Payment'].includes(tr)) return 0;
+    if(tr==='Reimbursement / Credit') return -Math.abs(amount);
+    if(tr==='Expense' || tr==='Debt Payoff Extra') return Math.abs(amount);
+    if(isAppleCardLike(t)) return amount>0 ? amount : 0;
+    return amount<0 ? Math.abs(amount) : -Math.abs(amount);
   }
-  window.transactionSpendAmount = function(t){
+  window.transactionSpendAmount=function(t){
     if(!inMonth(t)) return 0;
-    const sp=splits(t);
-    if(sp.length) return sp.reduce((a,s)=>a+(isTracked(s.category)?impactFromAmount(t,s.amount,splitTreatment(s)):0),0);
-    if(!isTracked(t.category)) return 0;
-    if(NON_SPEND_CATS.has(String(t.category||''))) return 0;
-    return impactFromAmount(t,t.amount,treatment(t));
+    if(splits(t).length) return splits(t).reduce((a,s)=>a+(tracked(s.category)?spendFrom(t,s.amount,s.treatment||'Auto'):0),0);
+    if(!tracked(t.category)) return 0;
+    return spendFrom(t,t.amount,treatment(t));
   };
-  window.txSpendByCategory = function(cat){
+  window.txSpendByCategory=function(cat){
     return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
-      const sp=splits(t);
-      if(sp.length) return a + sp.filter(s=>s.category===cat).reduce((x,s)=>x+(isTracked(s.category)?impactFromAmount(t,s.amount,splitTreatment(s)):0),0);
+      if(splits(t).length) return a + splits(t).filter(s=>s.category===cat).reduce((x,s)=>x+(tracked(s.category)?spendFrom(t,s.amount,s.treatment||'Auto'):0),0);
       return a + (t.category===cat ? transactionSpendAmount(t) : 0);
     },0);
   };
-  function sinkingContribution(fund){
-    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
-      const sp=splits(t);
-      if(sp.length) return a + sp.filter(s=>s.category===fund && splitTreatment(s)==='Sinking Fund Contribution').reduce((x,s)=>x+Math.abs(n(s.amount)),0);
-      return a + (t.category===fund && treatment(t)==='Sinking Fund Contribution' ? Math.abs(n(t.amount)) : 0);
-    },0);
-  }
-  function debtPayoffExtra(){
-    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
-      const sp=splits(t);
-      if(sp.length) return a + sp.filter(s=>s.category==='Debt Payoff' || splitTreatment(s)==='Debt Payoff Extra').reduce((x,s)=>x+Math.abs(n(s.amount)),0);
-      return a + (t.category==='Debt Payoff' ? Math.abs(n(t.amount)) : 0);
-    },0);
-  }
-  window.v35DebtPayoffExtra = debtPayoffExtra;
 
-  function effectiveBudgets(){
-    const rows=[...(app.spendingBudgets||[]).map(b=>({name:b.name,friendly:b.friendly||b.name,budget:n(b.budget)}))];
-    (app.bills||[]).forEach(b=>{
-      if(VARIABLE_NAMES.has(b.name) && !rows.some(r=>r.name===b.name)) rows.push({name:b.name,friendly:b.name,budget:n(b.amount)});
+  function keywordList(item){
+    const name=String(item.name||'').toUpperCase();
+    let keys=(item.paymentKeywords||[]).slice();
+    if(name.includes('APPLE CARD')) keys=keys.concat(['APPLECARD GSBANK','APPLECARD','APPLE CARD']);
+    if(name.includes('BEST BUY')) keys=keys.concat(['BEST BUY']);
+    if(name.includes('LOWES')) keys=keys.concat(['LOWES','LOWE']);
+    if(name.includes('CHASE')||name.includes('AMAZON PRIME')) keys=keys.concat(['CHASE CREDIT CRD','CHASE CREDIT','AMAZON PRIME VISA','CHASE']);
+    if(name.includes('U.S. BANK')||name.includes('US BANK')) keys=keys.concat(['U.S. BANK','US BANK']);
+    if(name.includes('MORTGAGE')||name.includes('NAVY FEDERAL')) keys=keys.concat(['NFCU MORT DEBIT','NAVY FEDERAL']);
+    if(name.includes('HELOC')) keys=keys.concat(['NFCU MORT DEBIT','HELOC']);
+    if(name.includes('BRIDGECREST')) keys=keys.concat(['BRIDGECREST']);
+    if(name.includes('WELLS FARGO')) keys=keys.concat(['WELLS FARGO']);
+    return [...new Set(keys.map(k=>String(k).toUpperCase().trim()).filter(k=>k.length>=4))];
+  }
+  function paymentTxs(kind){
+    return (app.transactions||[]).filter(t=>{
+      if(!inMonth(t)) return false;
+      const cat=String(t.category||''), tr=treatment(t), d=desc(t);
+      if(kind==='card') return cat==='Debt Payment'||tr==='Debt Payment'||/(AUTOPAY|AUTO PYMT|PAYMENT|PYMT|APPLECARD|CHASE CREDIT CRD|BEST BUY|LOWES)/.test(d);
+      if(kind==='loan') return cat==='Loan Payment'||tr==='Loan Payment'||/(NFCU MORT|BRIDGECREST|WELLS FARGO|APPLE WATCH)/.test(d);
+      if(kind==='bill') return true;
+      return false;
     });
-    return rows;
   }
-  function latestSchwabTx(){
-    return (app.transactions||[]).filter(t=>inMonth(t)&&isSchwab(t)&&t.runningBalance!==undefined&&t.runningBalance!==null&&t.runningBalance!==''&&!Number.isNaN(Number(t.runningBalance)))
-      .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')) || String(b.posted||'').localeCompare(String(a.posted||'')) || (app.transactions.indexOf(b)-app.transactions.indexOf(a)))[0] || null;
+  function paidMapFor(items, kind){
+    const out={}; (items||[]).forEach(i=>out[i.name]=0);
+    paymentTxs(kind).forEach(t=>{
+      const amount=abs(t.amount); if(!amount) return;
+      const d=desc(t);
+      const matches=(items||[]).filter(item=>keywordList(item).some(k=>d.includes(k)));
+      if(!matches.length) return;
+      let winner=matches[0], best=Math.abs(amount-n(matches[0].expected||matches[0].min||matches[0].amount));
+      matches.forEach(item=>{ const diff=Math.abs(amount-n(item.expected||item.min||item.amount)); if(diff<best){winner=item; best=diff;} });
+      out[winner.name]=(out[winner.name]||0)+amount;
+    });
+    return out;
   }
-  window.currentCheckingBalance = function(){
-    const tx=latestSchwabTx();
-    if(tx) { app.latestSchwabBalance=n(tx.runningBalance); return n(tx.runningBalance); }
-    return n(app.latestSchwabBalance);
+  function paidBillsMap(){
+    const out={}; (app.bills||[]).forEach(b=>out[b.name]=0);
+    (app.transactions||[]).filter(t=>inMonth(t)).forEach(t=>{
+      const d=desc(t), amount=abs(t.amount); if(!amount) return;
+      (app.bills||[]).forEach(b=>{
+        if(variableNecessities().has(b.name)) return;
+        const keys=keywordList(b).length?keywordList(b):[String(b.name||'').toUpperCase()];
+        if(keys.some(k=>d.includes(k))) out[b.name]=(out[b.name]||0)+amount;
+      });
+    });
+    return out;
+  }
+  window.paidCardsV36=function(){ return paidMapFor(app.creditCards||[], 'card'); };
+  window.paidLoansV36=function(){ return paidMapFor(app.loans||[], 'loan'); };
+  window.paidBillsV36=function(){ return paidBillsMap(); };
+  window.paidForScheduled=function(x){
+    if(x.kind==='card') return paidCardsV36()[x.name]||0;
+    if(x.kind==='loan') return paidLoansV36()[x.name]||0;
+    if(x.kind==='bill') return paidBillsV36()[x.name]||0;
+    return 0;
   };
-  window.currentCheckingBalanceV21 = window.currentCheckingBalance;
   function paycheckReceived(p){
     if(p.received===true || String(p.received).toLowerCase()==='true') return true;
-    const amt=Math.abs(n(p.amount));
-    return (app.transactions||[]).some(t=>inMonth(t)&&isSchwab(t)&&n(t.amount)>0&&Math.abs(Math.abs(n(t.amount))-amt)<1);
+    return (app.transactions||[]).some(t=>inMonth(t)&&isSchwab(t)&&n(t.amount)>0&&Math.abs(abs(t.amount)-abs(p.amount))<1.00);
   }
-  window.cashflowRows = function(){
-    let bal=currentCheckingBalance();
-    const rows=[[today(),'Latest Schwab running balance',0,bal,'Start']];
-    const events=[];
-    (app.paychecks||[]).forEach(p=>{ if(p.date>=today() && !paycheckReceived(p)) events.push({date:p.date,name:p.name,amount:n(p.amount)}); });
-    if(typeof unpaidScheduledFuture==='function') unpaidScheduledFuture().forEach(x=>events.push({date:x.date,name:x.name+' ('+x.bucket+')',amount:-n(x.left)}));
+  window.paycheckReceived = paycheckReceived;
+  window.paycheckIsReceivedV20 = paycheckReceived;
+  window.receivedPaycheckV21 = paycheckReceived;
+  function debtExtra(){ const paid=paidCardsV36(); return (app.creditCards||[]).reduce((a,c)=>a+Math.max(0,(paid[c.name]||0)-n(c.min)),0); }
+  window.extraDebtPaidThisMonth = debtExtra;
+  window.extraDebtPayoffV21 = debtExtra;
+  window.debtPayoffExtraFromSplitsV29 = debtExtra;
+  window.sinkingFundContributionAmount=function(name){
+    if(String(name||'').trim()==='Debt Payoff') return debtExtra();
+    return (app.transactions||[]).filter(t=>inMonth(t)).reduce((a,t)=>{
+      if(splits(t).length) return a+splits(t).filter(s=>s.category===name&&s.treatment==='Sinking Fund Contribution').reduce((x,s)=>x+abs(s.amount),0);
+      return a+(t.category===name && treatment(t)==='Sinking Fund Contribution'?abs(t.amount):0);
+    },0);
+  };
+  window.sinkingFundPosition=function(f){
+    if(String(f.name||'').trim()==='Debt Payoff') return debtExtra()-n(f.budget);
+    return n(f.balance)+n(f.saved)+sinkingFundContributionAmount(f.name)-txSpendByCategory(f.name);
+  };
+  window.cashflowRows=function(){
+    let bal=currentCheckingBalance(); const rows=[[today(),'Latest Schwab/current checking balance',0,bal,'Start']]; const events=[];
+    (app.paychecks||[]).forEach(p=>{ if(p.date>=today()&&!paycheckReceived(p)) events.push({date:p.date,name:p.name,amount:n(p.amount)}); });
+    unpaidScheduledFuture().forEach(x=>events.push({date:x.date,name:x.name+' ('+x.bucket+')',amount:-n(x.left)}));
     events.sort((a,b)=>a.date.localeCompare(b.date));
-    events.forEach(e=>{ bal+=n(e.amount); rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<2500?'Low':'OK']); });
+    events.forEach(e=>{bal+=n(e.amount); rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<V36_MIN_BUFFER?'Low':'OK']);});
     return rows;
   };
 
+  function effectiveBudgets(){
+    const rows=(app.spendingBudgets||[]).map(b=>({name:b.name,friendly:b.friendly||b.name,budget:n(b.budget)}));
+    (app.bills||[]).forEach(b=>{ if(variableNecessities().has(b.name)&&!rows.some(r=>r.name===b.name)) rows.push({name:b.name,friendly:b.name,budget:n(b.amount)}); });
+    return rows;
+  }
   function renderTop(){
+    const budgets=effectiveBudgets(); const total=budgets.reduce((a,b)=>a+n(b.budget),0); const spent=budgets.reduce((a,b)=>a+txSpendByCategory(b.name),0); const left=total-spent;
+    const sink=(app.sinkingFunds||[]).reduce((a,f)=>a+sinkingFundPosition(f),0); const needs=(app.transactions||[]).filter(t=>inMonth(t)&&t.category==='Needs Review').length; const info=latestSchwabInfo(); const checking=currentCheckingBalance();
     const top=document.getElementById('topMetrics'); if(!top) return;
-    const budgets=effectiveBudgets();
-    const totalBudget=budgets.reduce((a,b)=>a+n(b.budget),0);
-    const totalSpent=budgets.reduce((a,b)=>a+txSpendByCategory(b.name),0);
-    const left=totalBudget-totalSpent;
-    const sinkingNet=(app.sinkingFunds||[]).reduce((a,f)=>{
-      if(f.name==='Debt Payoff') return a + debtPayoffExtra() - n(f.budget);
-      return a + n(f.balance)+n(f.saved)+sinkingContribution(f.name)-txSpendByCategory(f.name);
-    },0);
-    const needs=(app.transactions||[]).filter(t=>inMonth(t)&&t.category==='Needs Review').length;
-    const tx=latestSchwabTx();
-    const checking=currentCheckingBalance();
-    top.innerHTML=[
-      ['Checking now',money(checking),checking<2500?'warn':'ok'],
-      ['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],
-      ['Sinking fund net',money(sinkingNet),sinkingNet<0?'bad':'ok'],
-      ['Needs review',needs,needs?'warn':'ok'],
-      ['Sheet sync',getApiUrl()?'Connected':'No API URL',getApiUrl()?'ok':'warn'],
-      ['Budget month',esc(app.month||'—'),''],
-      ['Current-month tx',(app.transactions||[]).filter(inMonth).length,''],
-      ['Latest Schwab balance row',tx?`${esc(tx.date)}<div class="tiny">${esc(tx.description||tx.rawDescription||'')}</div>`:'—','']
-    ].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]||''}">${m[1]}</div></div>`).join('');
-    top.dataset.loaded='true';
-    document.getElementById('dataHealthV23')?.remove();
-    document.querySelectorAll('#dataHealthV23').forEach(x=>x.remove());
-    document.body.classList.remove('loading');
-    document.getElementById('loadingOverlay')?.remove();
+    top.innerHTML=[['Checking now',money(checking),checking<V36_MIN_BUFFER?'warn':'ok'],['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],['Sinking fund net',money(sink),sink<0?'bad':'ok'],['Needs review',needs,needs?'warn':'ok'],['Sheet sync',getApiUrl&&getApiUrl()?'Connected':'No API URL',getApiUrl&&getApiUrl()?'ok':'warn'],['Budget month',esc(app.month||'—'),''],['Current-month tx',(app.transactions||[]).filter(inMonth).length,''],['Latest Schwab balance row',info.base?`${esc(info.base.date)}<div class="tiny">${esc(info.base.description||'')}</div>`:'—','']].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]||''}">${m[1]}</div></div>`).join('');
+    document.querySelectorAll('#dataHealthV23').forEach(e=>e.remove());
   }
-  function renderPersonalStable(owner,id,budgetName){
+  function showDecision(t, owner){
+    if(!inMonth(t) || (t.owner||'')!==owner) return false;
+    const cat=String(t.category||''), tr=treatment(t);
+    if(['Income','Debt Payment','Loan Payment','Payment / Transfer','Transfer','Debt Payoff'].includes(cat)) return false;
+    if(['Income','Ignore / Transfer','Debt Payment','Loan Payment','Debt Payoff Extra','Sinking Fund Contribution','Reimbursement / Credit'].includes(tr)) return false;
+    if((app.bills||[]).some(b=>b.name===cat)&&!variableNecessities().has(cat)) return false;
+    return transactionSpendAmount(t)>0;
+  }
+  window.renderPersonalView=function(owner,id,budgetName){
+    const budget=n((app.spendingBudgets||[]).find(b=>b.name===budgetName)?.budget); const spent=txSpendByCategory(budgetName); const rem=budget-spent; const tx=(app.transactions||[]).filter(t=>showDecision(t,owner)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,12);
     const el=document.getElementById(id); if(!el) return;
-    const b=(app.spendingBudgets||[]).find(x=>x.name===budgetName);
-    const budget=n(b?.budget), spent=txSpendByCategory(budgetName), rem=budget-spent;
-    const debtNames=creditLoanNames();
-    const tx=(app.transactions||[]).filter(t=>{
-      if(!inMonth(t) || (t.owner||'')!==owner) return false;
-      const cat=String(t.category||''), tr=treatment(t);
-      if(NON_SPEND_CATS.has(cat) || cat==='Debt Payoff') return false;
-      if(['Income','Ignore / Transfer','Debt Payment','Loan Payment','Debt Payoff Extra','Sinking Fund Contribution','Reimbursement / Credit'].includes(tr)) return false;
-      if(isFixedBill(cat) || debtNames.has(cat)) return false;
-      return transactionSpendAmount(t)>0;
-    }).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')) || String(b.posted||'').localeCompare(String(a.posted||''))).slice(0,12);
     el.innerHTML=`<div class="metrics" style="grid-template-columns:1fr 1fr"><div class="metric"><div class="label">${owner} personal left</div><div class="value ${rem<0?'bad':rem<50?'warn':'ok'}">${money(rem)}</div></div><div class="metric"><div class="label">${owner} personal spent</div><div class="value">${money(spent)}</div></div></div><h3>${owner} Spending Decisions</h3><table><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Budget Impact</th></tr>${tx.map(t=>`<tr><td>${esc(t.date)}</td><td>${esc(t.description)}${t.purchasedBy?`<div class="tiny">${esc(t.purchasedBy)}</div>`:''}</td><td>${esc(t.category)}</td><td class="num">${money(transactionSpendAmount(t))}</td></tr>`).join('')||'<tr><td colspan="4">None yet.</td></tr>'}</table>`;
-  }
-  function renderDailyTables(){
-    const rem=document.getElementById('remainingTable');
-    if(rem){
-      rem.innerHTML='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th><th>Progress</th></tr>'+effectiveBudgets().map(b=>{
-        const spent=txSpendByCategory(b.name), left=n(b.budget)-spent, pct=b.budget?Math.max(0,Math.min(100,Math.round(spent/b.budget*100))):0;
-        const cls=left<0?'bad':pct>80?'warn':'';
-        return `<tr><td>${esc(b.friendly||b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${left<0?'bad':''}">${money(left)}</td><td><div class="progress"><div class="bar ${cls}" style="width:${pct}%"></div></div><div class="tiny">${pct}%</div></td></tr>`;
-      }).join('');
-    }
-    const sink=document.getElementById('sinkingPositionTable');
-    if(sink){
-      sink.innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned</th><th class="num">Actual / Saved</th><th class="num">Spent</th><th class="num">Position</th></tr>'+
-      (app.sinkingFunds||[]).map(f=>{
-        if(f.name==='Debt Payoff'){
-          const actual=debtPayoffExtra(), pos=actual-n(f.budget);
-          return `<tr><td>${esc(f.name)}<div class="tiny">Extra principal above minimums</div></td><td class="num">—</td><td class="num">${money(f.budget)}</td><td class="num">${money(actual)}</td><td class="num">—</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`;
-        }
-        const actual=n(f.saved)+sinkingContribution(f.name), spent=txSpendByCategory(f.name), pos=n(f.balance)+actual-spent;
-        return `<tr><td>${esc(f.name)}</td><td class="num">${money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(actual)}</td><td class="num">${money(spent)}</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`;
-      }).join('');
-    }
-  }
-  function renderAllStable(){
-    try{
-      renderTop();
-      renderPersonalStable('Katy','katyView','Katy - Individual Priorities');
-      renderPersonalStable('Joe','joeView','Joe - Individual Priorities');
-      renderDailyTables();
-      if(typeof renderCashflow==='function') renderCashflow();
-      if(typeof renderBudgets==='function') renderBudgets();
-      if(typeof renderDebts==='function') renderDebts();
-      if(typeof renderFundingSchedule==='function') renderFundingSchedule();
-    }catch(e){ console.error('v35 render stable failed', e); }
-  }
-
-  function cats(){ return [...new Set([...(app.spendingBudgets||[]).map(b=>b.name),...(app.sinkingFunds||[]).map(f=>f.name),...(app.bills||[]).map(b=>b.name),...(app.creditCards||[]).map(c=>c.name),...(app.loans||[]).map(l=>l.name),'Debt Payment','Loan Payment','Payment / Transfer','Income','Needs Review','Debt Payoff'])].sort(); }
-  function treatmentOptions(sel){ return ['Auto','Expense','Reimbursement / Credit','Sinking Fund Contribution','Debt Payment','Debt Payoff Extra','Loan Payment','Ignore / Transfer','Income'].map(o=>`<option value="${esc(o)}" ${sel===o?'selected':''}>${esc(o)}</option>`).join(''); }
-  function catOptions(sel){ return cats().map(c=>`<option value="${esc(c)}" ${sel===c?'selected':''}>${esc(c)}</option>`).join(''); }
-  function splitEditor(t){
-    const sp=splits(t);
-    if(!sp.length) return `<div class="split-summary"><button type="button" class="tiny-btn" onclick="addSplitV35('${esc(t.id)}')">Split</button>${String(t.description||'').toUpperCase().includes('APPLECARD')?` <button type="button" class="tiny-btn" onclick="autoSplitAppleV35('${esc(t.id)}')">Auto-split Apple payment</button>`:''}</div>`;
-    const total=sp.reduce((a,s)=>a+Math.abs(n(s.amount)),0), diff=Math.abs(n(t.amount))-total;
-    return `<div class="split-box"><b>Splits</b>${sp.map((s,i)=>`<div class="split-line"><select data-split-cat="${esc(t.id)}" data-i="${i}">${catOptions(s.category)}</select><select data-split-treatment="${esc(t.id)}" data-i="${i}">${treatmentOptions(s.treatment||'Auto')}</select><input type="number" step="0.01" data-split-amount="${esc(t.id)}" data-i="${i}" value="${n(s.amount)}"><button type="button" class="tiny-btn" data-remove-split="${esc(t.id)}" data-i="${i}">Remove</button></div>`).join('')}<div class="split-summary ${Math.abs(diff)<.01?'split-ok':'split-warning'}">Split total ${money(total)} of ${money(Math.abs(n(t.amount)))}${Math.abs(diff)<.01?' ✓':' — difference '+money(diff)}</div><button type="button" class="tiny-btn" onclick="addSplitV35('${esc(t.id)}')">Add line</button></div>`;
-  }
-  window.addSplitV35=function(id){ const t=(app.transactions||[]).find(x=>x.id===id); if(!t)return; t.splits=t.splits||[]; t.splits.push({category:t.category||'Needs Review',treatment:'Expense',amount:0}); renderTransactionsStable(); };
-  window.autoSplitAppleV35=function(id){ const t=(app.transactions||[]).find(x=>x.id===id); if(!t)return; const card=(app.creditCards||[]).find(c=>String(c.name).toLowerCase().includes('apple card')&&String(c.name).toLowerCase().includes('joe')); const min=n(card?.min), amount=Math.abs(n(t.amount)); t.category='Debt Payment'; t.treatment='Debt Payment'; t.splits=[{category:card?card.name:'Apple Card - Joe',treatment:'Debt Payment',amount:Math.min(min,amount)},{category:'Debt Payoff',treatment:'Debt Payoff Extra',amount:Math.max(0,amount-min)}].filter(s=>s.amount>0); renderTransactionsStable(); saveTransactionEditsStable(); };
-  let page=1, pageSize=50, showAll=false;
-  function ensureTxControls(){
-    const section=document.querySelector('#transactions .section');
-    if(!section || document.getElementById('txControlsV35')) return;
-    const div=document.createElement('div');
-    div.id='txControlsV35';
-    div.className='toolbar';
-    div.innerHTML=`<button type="button" id="txPrevV35">Prev</button><span id="txPageInfoV35" class="small"></span><button type="button" id="txNextV35">Next</button><label class="small"><input type="checkbox" id="txShowAllV35" style="width:auto"> Show all months</label><select id="txPageSizeV35" style="max-width:100px"><option>25</option><option selected>50</option><option>100</option></select>`;
-    const table=document.getElementById('txTable');
-    section.insertBefore(div, table);
-    document.getElementById('txPrevV35').onclick=()=>{page=Math.max(1,page-1);renderTransactionsStable();};
-    document.getElementById('txNextV35').onclick=()=>{page++;renderTransactionsStable();};
-    document.getElementById('txShowAllV35').onchange=e=>{showAll=e.target.checked;page=1;renderTransactionsStable();};
-    document.getElementById('txPageSizeV35').onchange=e=>{pageSize=n(e.target.value)||50;page=1;renderTransactionsStable();};
-  }
-  function renderTransactionsStable(){
-    ensureTxControls();
-    const ownerFilter=document.getElementById('filterOwner')?.value||'', catFilter=document.getElementById('filterCategory')?.value||'', q=String(document.getElementById('searchTx')?.value||'').toLowerCase();
-    let list=(app.transactions||[]).filter(t=>{
-      const owner=t.owner||'Shared/Unknown';
-      const splitMatch=splits(t).some(s=>s.category===catFilter);
-      return (showAll||inMonth(t)) && (!ownerFilter||owner===ownerFilter) && (!catFilter||t.category===catFilter||splitMatch) && (!q||String((t.description||'')+' '+(t.rawDescription||'')+' '+(t.category||'')).toLowerCase().includes(q));
-    }).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||String(b.posted||'').localeCompare(String(a.posted||'')));
-    const pages=Math.max(1,Math.ceil(list.length/pageSize)); if(page>pages) page=pages;
-    document.getElementById('txPageInfoV35').textContent=`Page ${page} of ${pages} (${list.length} rows)`;
-    const rows=list.slice((page-1)*pageSize,page*pageSize).map(t=>{
-      const ownerSel=`<select data-owner="${esc(t.id)}"><option ${!t.owner?'selected':''}>Shared/Unknown</option><option ${t.owner==='Joe'?'selected':''}>Joe</option><option ${t.owner==='Katy'?'selected':''}>Katy</option></select>`;
-      return `<tr><td>${esc(t.date)}</td><td>${esc(t.source)}</td><td>${ownerSel}</td><td><b>${esc(t.description)}</b><div class="tiny">${esc(t.purchasedBy||'')}</div>${splitEditor(t)}</td><td><select data-cat="${esc(t.id)}">${catOptions(t.category)}</select></td><td><select data-treatment="${esc(t.id)}">${treatmentOptions(treatment(t))}</select></td><td class="num">${money(t.amount)}</td><td class="num ${transactionSpendAmount(t)<0?'ok':''}">${money(transactionSpendAmount(t))}</td></tr>`;
-    }).join('');
-    document.getElementById('txTable').innerHTML='<tr><th>Date</th><th>Source</th><th>Owner</th><th>Description</th><th>Category</th><th>Treatment</th><th class="num">Amount</th><th class="num">Budget Impact</th></tr>'+rows;
-  }
-  window.renderTransactions = renderTransactionsStable;
-
-  function captureSplits(){
-    const by={};
-    document.querySelectorAll('[data-split-cat]').forEach(sel=>{const id=sel.dataset.splitCat,i=Number(sel.dataset.i); by[id]=by[id]||[]; by[id][i]=by[id][i]||{}; by[id][i].category=sel.value;});
-    document.querySelectorAll('[data-split-treatment]').forEach(sel=>{const id=sel.dataset.splitTreatment,i=Number(sel.dataset.i); by[id]=by[id]||[]; by[id][i]=by[id][i]||{}; by[id][i].treatment=sel.value;});
-    document.querySelectorAll('[data-split-amount]').forEach(inp=>{const id=inp.dataset.splitAmount,i=Number(inp.dataset.i); by[id]=by[id]||[]; by[id][i]=by[id][i]||{}; by[id][i].amount=n(inp.value);});
-    Object.keys(by).forEach(id=>{const t=(app.transactions||[]).find(x=>x.id===id); if(t)t.splits=by[id].filter(s=>s&&s.category&&n(s.amount)!==0);});
-  }
-  function saveTransactionEditsStable(){
-    document.querySelectorAll('[data-cat]').forEach(sel=>{const t=(app.transactions||[]).find(x=>x.id===sel.dataset.cat); if(t)t.category=sel.value;});
-    document.querySelectorAll('[data-owner]').forEach(sel=>{const t=(app.transactions||[]).find(x=>x.id===sel.dataset.owner); if(t)t.owner=sel.value==='Shared/Unknown'?'':sel.value;});
-    document.querySelectorAll('[data-treatment]').forEach(sel=>{const t=(app.transactions||[]).find(x=>x.id===sel.dataset.treatment); if(t)t.treatment=sel.value;});
-    captureSplits();
-    renderAllStable();
-  }
-  window.saveTransactionEdits = saveTransactionEditsStable;
-
-  function csvParse(text){
-    const rows=[]; let row=[], cell='', quote=false;
-    for(let i=0;i<text.length;i++){ const c=text[i], next=text[i+1];
-      if(c=='"'&&quote&&next=='"'){ cell+='"'; i++; }
-      else if(c=='"') quote=!quote;
-      else if(c===','&&!quote){ row.push(cell); cell=''; }
-      else if((c==='\n'||c==='\r')&&!quote){ if(row.length||cell){row.push(cell);rows.push(row);row=[];cell='';} if(c==='\r'&&next==='\n')i++; }
-      else cell+=c;
-    }
-    if(row.length||cell){ row.push(cell); rows.push(row); }
-    return rows.filter(r=>r.some(c=>String(c).trim()));
-  }
-  function normHeader(h){ return String(h||'').trim().toLowerCase().replace(/[\s_()$.-]+/g,' ').replace(/\s+/g,' ').trim(); }
-  function idx(headers,names){
-    const h=headers.map(normHeader), nms=names.map(normHeader);
-    for(const n of nms){ const i=h.indexOf(n); if(i>=0)return i; }
-    for(const n of nms){ const i=h.findIndex(x=>x===n||x.includes(n)||n.includes(x)); if(i>=0)return i; }
-    return -1;
-  }
-  function parseDate(v){
-    const s=String(v||'').trim(); if(!s)return app.today;
-    let m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/); if(m)return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-    m=s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/); if(m){let y=m[3].length===2?'20'+m[3]:m[3]; return `${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;}
-    const d=new Date(s); return Number.isNaN(d.getTime())?s:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-  function parseMoney(v){ let s=String(v??'').trim(); if(!s)return 0; const neg=/^\(.*\)$/.test(s); s=s.replace(/[,$]/g,'').replace(/[()]/g,'').replace(/−/g,'-'); const x=Number(s); return Number.isNaN(x)?0:(neg?-Math.abs(x):x); }
-  function applyRule(desc){
-    const d=String(desc||'').toUpperCase();
-    for(const r of (app.rules||[])){ if(d.includes(String(r.match||'').toUpperCase())) return {category:r.category||'Needs Review',owner:r.owner||''}; }
-    return {category:'Needs Review',owner:''};
-  }
-  function sourceFor(file,headers){ const name=String(file||'').toLowerCase(), h=headers.map(normHeader).join('|'); if(name.includes('apple')||h.includes('purchased by')||h.includes('clearing date')||h.includes('amount usd'))return 'Apple Card'; if(name.includes('schwab')||h.includes('running balance')||h.includes('withdrawal')||h.includes('deposit'))return 'Schwab'; return 'Imported'; }
-  function buildTx(row, headers, fileName, rowNum){
-    const dateI=idx(headers,['transaction date','date']), postI=idx(headers,['clearing date','posted date','post date','posted']), descI=idx(headers,['description','merchant','name','memo','payee']), merchI=idx(headers,['merchant','merchant name']), amtI=idx(headers,['amount usd','amount']), debitI=idx(headers,['debit','withdrawal','withdrawals']), creditI=idx(headers,['credit','deposit','deposits']), accountI=idx(headers,['account','account name']), buyerI=idx(headers,['purchased by','card member','cardmember']), rbI=idx(headers,['running balance','balance']);
-    let amount=0; if(amtI>=0) amount=parseMoney(row[amtI]); else { const deb=debitI>=0?parseMoney(row[debitI]):0, cred=creditI>=0?parseMoney(row[creditI]):0; amount=cred?Math.abs(cred):deb?-Math.abs(deb):0; }
-    if(!amount) return null;
-    const source=sourceFor(fileName,headers), merchant=merchI>=0?row[merchI]:'', desc=String(merchant || (descI>=0?row[descI]:'') || 'Imported transaction').trim(), raw=[descI>=0?row[descI]:'',merchant].filter(Boolean).join(' | ') || desc, rule=applyRule(raw||desc);
-    const tx={id:'imp-'+Date.now()+'-'+rowNum+'-'+Math.random().toString(36).slice(2),date:parseDate(dateI>=0?row[dateI]:app.today),posted:postI>=0?parseDate(row[postI]):'',source,account:accountI>=0&&row[accountI]?row[accountI]:(source==='Schwab'?'Schwab Checking':source),description:desc,rawDescription:raw,merchant,amount,owner:rule.owner,purchasedBy:buyerI>=0?row[buyerI]:'',category:rule.category,treatment:'Auto'};
-    if(rbI>=0 && row[rbI]!==undefined && String(row[rbI]).trim()!=='') tx.runningBalance=parseMoney(row[rbI]);
-    if(source==='Schwab' && amount>0 && /PAYROLL|DIRECT DEP|DEPOSIT|MARINEMAX/i.test(raw)) { tx.category='Income'; tx.treatment='Income'; }
-    return tx;
-  }
-  function dup(tx){
-    const key=x=>[x.date,x.source,String(x.description||'').toUpperCase(),n(x.amount).toFixed(2)].join('|');
-    const k=key(tx); return (app.transactions||[]).some(t=>key(t)===k);
-  }
-  window.importCsvFilesV35 = async function(){
-    const files=[...(document.getElementById('fileInput')?.files||[])];
-    if(!files.length){ alert('Choose CSV file(s) first.'); return; }
-    let imported=0, skipped=0, duplicates=0;
-    for(const file of files){
-      const rows=csvParse(await file.text()); if(rows.length<2) continue;
-      const headers=rows.shift();
-      rows.forEach((row,i)=>{ const tx=buildTx(row,headers,file.name,i); if(!tx){skipped++;return;} if(dup(tx)){duplicates++;return;} app.transactions.push(tx); imported++; });
-    }
-    renderSelectors?.(); renderTransactionsStable(); renderAllStable();
-    setSyncStatus(`Imported ${imported} transaction(s). Skipped ${skipped}; duplicates ${duplicates}.`, 'ok');
-    if(imported && document.getElementById('autoSyncToggle')?.checked) pushTransactionsToSheetStable().catch(e=>setSyncStatus('Auto-sync after import failed: '+e.message,'bad'));
   };
-  async function pushTransactionsToSheetStable(){
-    saveTransactionEditsStable();
-    setSyncStatus('Pushing current data to Google Sheets...', 'warn');
-    const json=await callSheetApi({action:'saveAll', app});
-    setSyncStatus('Saved '+(json.count ?? (app.transactions||[]).length)+' transaction(s) to Google Sheets at '+new Date().toLocaleTimeString(), 'ok');
-    return json;
-  }
-  window.pushTransactionsToSheet = function(){ pushTransactionsToSheetStable().catch(e=>{console.error(e); setSyncStatus('Push failed: '+e.message,'bad'); alert('Push failed: '+e.message);}); };
-
-  document.addEventListener('click', function(e){
-    if(e.target?.id==='importBtn'){ e.preventDefault(); e.stopImmediatePropagation(); importCsvFilesV35(); }
-    if(e.target?.id==='pushSheet'){ e.preventDefault(); e.stopImmediatePropagation(); pushTransactionsToSheet(); }
-    const rm=e.target.closest?.('[data-remove-split]');
-    if(rm){ const t=(app.transactions||[]).find(x=>x.id===rm.dataset.removeSplit); if(t&&Array.isArray(t.splits)){ t.splits.splice(Number(rm.dataset.i ?? rm.dataset.splitIdx),1); renderTransactionsStable(); } }
-  }, true);
-  document.addEventListener('change', function(e){
-    const ds=e.target?.dataset||{};
-    if(ds.cat||ds.owner||ds.treatment||ds.splitCat||ds.splitTreatment||ds.splitAmount){
-      if(!ds.splitAmount) saveTransactionEditsStable();
-    }
-  }, true);
-
-  // Replace render at the end, after all old wrappers.
-  window.render = function(){
-    try{ renderSelectors?.(); renderTransactionsStable(); renderAllStable(); }
-    catch(e){ console.error('v35 render failed', e); }
+  const prevRenderDaily=window.renderDaily;
+  window.renderDaily=function(){
+    if(typeof prevRenderDaily==='function') { try{ prevRenderDaily(); }catch(e){ console.warn('old renderDaily failed',e); } }
+    renderTop();
+    renderPersonalView('Katy','katyView','Katy - Individual Priorities'); renderPersonalView('Joe','joeView','Joe - Individual Priorities');
+    const budgets=effectiveBudgets(); let rows='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th><th>Progress</th></tr>';
+    budgets.forEach(b=>{const spent=txSpendByCategory(b.name), rem=n(b.budget)-spent, pct=b.budget?Math.max(0,Math.min(100,Math.round(spent/b.budget*100))):0, cls=rem<0?'bad':pct>80?'warn':''; rows+=`<tr><td>${esc(b.friendly||b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${rem<0?'bad':''}">${money(rem)}</td><td><div class="progress"><div class="bar ${cls}" style="width:${pct}%"></div></div><div class="tiny">${pct}%</div></td></tr>`});
+    const remTable=document.getElementById('remainingTable'); if(remTable) remTable.innerHTML=rows;
+    const st=document.getElementById('sinkingPositionTable'); if(st) st.innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned</th><th class="num">Actual / Contributed</th><th class="num">Spent</th><th class="num">Position</th></tr>'+(app.sinkingFunds||[]).map(f=>{const actual=sinkingFundContributionAmount(f.name), spent=f.name==='Debt Payoff'?actual:txSpendByCategory(f.name), pos=sinkingFundPosition(f); return `<tr><td>${esc(f.name)}${f.name==='Debt Payoff'?'<div class="tiny">Extra payments above minimums</div>':''}</td><td class="num">${f.name==='Debt Payoff'?'—':money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(actual)}</td><td class="num">${f.name==='Debt Payoff'?'—':money(spent)}</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`}).join('');
   };
-  setTimeout(()=>{ const input=document.getElementById('apiUrl'); if(input && !input.value) input.value=V35_API_URL; render(); },0);
-  setTimeout(render,500);
+  window.renderDebts=function(){
+    const pc=paidCardsV36(), pl=paidLoansV36(), pb=paidBillsV36();
+    document.getElementById('ccTable').innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Min</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+(app.creditCards||[]).map(c=>`<tr><td>${esc(c.name)}</td><td class="num">${money(abs(c.owed))}</td><td class="num">${money(c.min)}</td><td class="num">${money(pc[c.name]||0)}</td><td>${esc(c.due)}</td><td class="num">${Number(c.apr||0).toFixed(2)}%</td></tr>`).join('');
+    document.getElementById('loanTable').innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Payment</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+(app.loans||[]).map(l=>`<tr><td>${esc(l.name)}</td><td class="num">${money(abs(l.owed))}</td><td class="num">${money(l.min)}</td><td class="num">${money(pl[l.name]||0)}</td><td>${esc(l.due)}</td><td class="num">${Number(l.apr||0).toFixed(2)}%</td></tr>`).join('');
+    document.getElementById('billTable').innerHTML='<tr><th>Name</th><th class="num">Budget</th><th class="num">Confirmed Paid</th><th>Due</th></tr>'+(app.bills||[]).map(b=>`<tr><td>${esc(b.name)}</td><td class="num">${money(b.amount)}</td><td class="num">${money(pb[b.name]||0)}</td><td>${esc(b.due)}</td></tr>`).join('');
+  };
+  const prevRender=window.render;
+  window.render=function(){ if(typeof prevRender==='function') { try{prevRender();}catch(e){console.warn('old render failed',e);} } renderDaily(); renderCashflow(); renderBudgets(); renderDebts(); document.body.classList.remove('loading'); };
+  // Keep import button alive if previous listeners got clobbered.
+  setTimeout(()=>{ const btn=document.getElementById('importBtn'); if(btn && typeof importCsvFiles==='function'){ btn.onclick=(e)=>{ e.preventDefault(); importCsvFiles(); }; } render(); },0);
 })();
 </script>
 
