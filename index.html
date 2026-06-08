@@ -1209,7 +1209,7 @@ render();
    To make the API URL work in incognito/for both Joe and Katy, paste your Apps Script Web App URL below.
    Example: const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/.../exec';
 */
-const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbyL7Zy1YCFHpe2e20ZWb3ApirVPuRWszNtKV07gS7ggebiGW6S7wUkNJwZ-Gd4IdsTd/exec';
+const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbzZV0hPGiWehLkAkJm15z4vUB3utNCt85DwpoWj6hfCmxREyEZmvQVkDiXwlNdjAudR/exec';
 
 save = function(){ /* no-op: Google Sheets is the database */ };
 load = function(){ return structuredClone ? structuredClone(initialData) : JSON.parse(JSON.stringify(initialData)); };
@@ -3293,27 +3293,68 @@ button.tiny-btn {
   }
 
   function latestSchwabRunningBalanceTxV42(){
+    // Schwab exports/display order often places the current same-day row ABOVE older same-day rows.
+    // So for date/post ties, lower transaction index is newer/currenter.
     return (app.transactions || [])
       .filter(t => currentMonthTx(t) && isSchwab(t) && t.runningBalance !== undefined && t.runningBalance !== null && t.runningBalance !== '' && !Number.isNaN(Number(t.runningBalance)))
-      .sort((a,b) => txOrderKey(b).localeCompare(txOrderKey(a)))[0] || null;
+      .sort((a,b) => {
+        const d = iso(b.date).localeCompare(iso(a.date));
+        if(d) return d;
+        const p = iso(b.posted || b.date).localeCompare(iso(a.posted || a.date));
+        if(p) return p;
+        return (app.transactions || []).indexOf(a) - (app.transactions || []).indexOf(b);
+      })[0] || null;
   }
 
   function currentCheckingV42(){
     const latest = latestSchwabRunningBalanceTxV42();
+    const sheetBalance = n(app.latestSchwabBalance);
+
     if(latest){
-      const latestKey = txOrderKey(latest);
+      const latestDate = iso(latest.date);
+      const latestPosted = iso(latest.posted || latest.date);
+      const latestIndex = (app.transactions || []).indexOf(latest);
       let bal = n(latest.runningBalance);
-      // If a newer Schwab transaction lacks a running balance, apply it on top.
+
+      // Apply Schwab transactions that are newer than the latest running-balance row but do not have
+      // their own running balance. This is the bug you hit: Chase autopay was above the latest
+      // running-balance row in the transaction list, but v42 failed to apply it.
       (app.transactions || [])
-        .filter(t => currentMonthTx(t) && isSchwab(t) && txOrderKey(t) > latestKey && (t.runningBalance === undefined || t.runningBalance === null || t.runningBalance === ''))
-        .sort((a,b)=>txOrderKey(a).localeCompare(txOrderKey(b)))
-        .forEach(t => { bal += n(t.amount); });
+        .map((t,i)=>({t,i}))
+        .filter(x => {
+          const t=x.t;
+          if(!currentMonthTx(t) || !isSchwab(t)) return false;
+          if(t.runningBalance !== undefined && t.runningBalance !== null && t.runningBalance !== '') return false;
+          const d = iso(t.date);
+          const p = iso(t.posted || t.date);
+          if(d > latestDate) return true;
+          if(d === latestDate && p > latestPosted) return true;
+          if(d === latestDate && p === latestPosted && x.i < latestIndex) return true;
+          return false;
+        })
+        .sort((a,b) => {
+          const d=iso(a.t.date).localeCompare(iso(b.t.date)); if(d) return d;
+          const p=iso(a.t.posted || a.t.date).localeCompare(iso(b.t.posted || b.t.date)); if(p) return p;
+          return b.i - a.i; // apply older-to-newer when list order is newest-first
+        })
+        .forEach(x => { bal += n(x.t.amount); });
+
+      // If the Sheet already gives a current balance that differs from the transaction-derived balance,
+      // trust the Sheet value only when it is lower by an exact newer withdrawal amount. This prevents
+      // old embedded balances from overriding real running-balance math, while fixing the missing-autopay case.
+      if(sheetBalance && Math.abs(sheetBalance - bal) > 0.009){
+        const diff = Math.abs(sheetBalance - bal);
+        const hasMatchingNewerWithdrawal = (app.transactions || []).some((t,i) =>
+          currentMonthTx(t) && isSchwab(t) && i < latestIndex && Math.abs(Math.abs(n(t.amount)) - diff) < 0.02
+        );
+        if(hasMatchingNewerWithdrawal) return sheetBalance;
+      }
+
       app.latestSchwabBalance = bal;
       return bal;
     }
-    if(typeof currentCheckingBalanceV21 === 'function') return n(currentCheckingBalanceV21());
-    if(typeof currentCheckingBalance === 'function') return n(currentCheckingBalance());
-    return n(app.latestSchwabBalance);
+
+    return sheetBalance;
   }
 
   function originalPaychecksV42(){
