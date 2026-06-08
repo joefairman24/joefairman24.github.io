@@ -366,53 +366,61 @@ function updateReceivedPaychecks(transactions) {
   }
 }
 
-function saveTransactions(transactions) {
-  const sheetName = 'Transactions';
-  let sh = getSheet(sheetName);
-  if (!sh) sh = ss().insertSheet(sheetName);
 
-  const headers = [
-    'Transaction ID', 'Date', 'Imported Date', 'Account', 'Description', 'Merchant',
-    'Amount', 'Type', 'Treatment', 'Category', 'Fund', 'Month', 'Reviewed', 'Notes', 'Splits',
-    'Owner', 'Source', 'Posted', 'Purchased By', 'Raw Description', 'Running Balance'
+function saveTransactions(transactions) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Transactions') || ss.insertSheet('Transactions');
+
+  var headers = [
+    'Transaction ID','Date','Posted','Imported Date','Source','Account','Description','Raw Description',
+    'Merchant','Amount','Owner','Purchased By','Type','Treatment','Category','Fund','Month',
+    'Reviewed','Notes','Running Balance','Splits'
   ];
 
-  const rows = transactions.map(t => {
-    const category = String(t.category || '');
-    const type = ['Debt Payment','Loan Payment','Payment / Transfer','Income'].includes(category) ? category : 'Expense';
-    const month = monthFromDate(t.date, '');
+  // Ensure header has exactly these columns. This prevents 22-vs-21 range errors.
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  var lastCol = sheet.getLastColumn();
+  if (lastCol > headers.length) {
+    sheet.deleteColumns(headers.length + 1, lastCol - headers.length);
+  }
+
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).clearContent();
+  }
+
+  transactions = transactions || [];
+  if (!transactions.length) return { ok: true, count: 0 };
+
+  var rows = transactions.map(function(t) {
     return [
-      t.id || Utilities.getUuid(),
+      t.id || t.transactionId || '',
       t.date || '',
       t.posted || '',
+      t.importedDate || new Date(),
+      t.source || '',
       t.account || '',
       t.description || '',
+      t.rawDescription || '',
       t.merchant || '',
-      asNum(t.amount),
-      type,
-      t.treatment || 'Auto',
-      category,
-      '',
-      month,
-      true,
-      t.notes || '',
-      stringifySplitsV29_(t.splits),
-      stringifySplitsV29_(t.splits),
+      Number(t.amount) || 0,
       t.owner || '',
-      t.source || '',
-      t.posted || '',
       t.purchasedBy || '',
-      t.rawDescription || t.description || '',
-      t.runningBalance === undefined || t.runningBalance === null ? '' : asNum(t.runningBalance)
+      t.type || '',
+      t.treatment || 'Auto',
+      t.category || 'Needs Review',
+      t.fund || '',
+      t.month || (String(t.date || '').substring(0, 7)),
+      t.reviewed === true || t.reviewed === 'TRUE',
+      t.notes || '',
+      t.runningBalance === undefined || t.runningBalance === null || t.runningBalance === '' ? '' : Number(t.runningBalance),
+      stringifySplitsV29_(t.splits)
     ];
   });
 
-  sh.clearContents();
-  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
-  if (rows.length) sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
-  sh.autoResizeColumns(1, headers.length);
-  return rows.length;
+  sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  return { ok: true, count: rows.length };
 }
+
 
 
 /**

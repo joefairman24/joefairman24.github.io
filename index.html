@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Fairman Family Budget Dashboard</title>
+<title>Fairman Family Budget Dashboard v31</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#f7f3ea;--card:#fffdf8;--ink:#263238;--muted:#667085;--line:#d0d5dd;--green:#dff4df;--pink:#f7dddd;--blue:#dbeafe;--cream:#fff7ed;--bad:#b42318;--warn:#b54708;--ok:#027a48;--dark:#263238}
@@ -40,7 +40,7 @@ body.loading main{opacity:1!important;pointer-events:auto!important}
 
 </head>
 <body>
-<header><h1>Fairman Family Budget Dashboard</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+<header><h1>Fairman Family Budget Dashboard v31</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 
 </div>
 <main>
@@ -1209,7 +1209,7 @@ render();
    To make the API URL work in incognito/for both Joe and Katy, paste your Apps Script Web App URL below.
    Example: const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/.../exec';
 */
-const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbz6DEAXPzskLUAKneQXvWjH_i7pPUmxg85hyAOSM9hhr6AFRr-GDjeAAf3aXzVMMM_L/exec';
+const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycby2Phk4jZyVyiXhtVK9E1nJLNAPzdOyTwP0v3DVRppUCjeYpAVN5zG-GqVHF0Sw-OsN/exec';
 
 save = function(){ /* no-op: Google Sheets is the database */ };
 load = function(){ return structuredClone ? structuredClone(initialData) : JSON.parse(JSON.stringify(initialData)); };
@@ -3118,6 +3118,124 @@ button.tiny-btn {
     console.warn('v30 render skipped', e);
     renderTopMetricsV30();
   }
+})();
+</script>
+
+
+<script>
+/* ===== v31 FINAL TOP METRICS OVERRIDE =====
+   Removes duplicate metric rows and fixes Checking Now.
+   Checking Now = latest current-month Schwab transaction runningBalance.
+   If none exists, fallback to app.latestSchwabBalance.
+*/
+(function(){
+  function currentMonthV31(t){
+    return String(t && t.date || '').slice(0,7) === String(app.month || '');
+  }
+
+  function latestSchwabTxV31(){
+    const tx = (app.transactions || [])
+      .filter(t => {
+        const src = String(t.source || '').toLowerCase();
+        const acct = String(t.account || '').toLowerCase();
+        return currentMonthV31(t) &&
+          (src.includes('schwab') || acct.includes('schwab')) &&
+          t.runningBalance !== undefined &&
+          t.runningBalance !== null &&
+          t.runningBalance !== '' &&
+          !isNaN(Number(t.runningBalance));
+      })
+      .sort((a,b) => {
+        const d = String(b.date||'').localeCompare(String(a.date||''));
+        if(d) return d;
+        const p = String(b.posted||'').localeCompare(String(a.posted||''));
+        if(p) return p;
+        return String(b.id||'').localeCompare(String(a.id||''));
+      });
+    return tx[0] || null;
+  }
+
+  function checkingNowV31(){
+    const latest = latestSchwabTxV31();
+    if(latest) return Number(latest.runningBalance) || 0;
+    return Number(app.latestSchwabBalance) || 0;
+  }
+
+  function monthlySpendLeftV31(){
+    const budgets = app.spendingBudgets || [];
+    const total = sum(budgets, b => Number(b.budget)||0);
+    const spent = sum(budgets, b => typeof txSpendByCategory === 'function' ? txSpendByCategory(b.name) : 0);
+    return total - spent;
+  }
+
+  function debtPayoffExtraV31(){
+    if(typeof debtPayoffExtraFromSplitsV29 === 'function') return debtPayoffExtraFromSplitsV29();
+    return 0;
+  }
+
+  function sinkingNetV31(){
+    return sum(app.sinkingFunds || [], f => {
+      if(f.name === 'Debt Payoff') return debtPayoffExtraV31() - (Number(f.budget)||0);
+      const spent = typeof txSpendByCategory === 'function' ? txSpendByCategory(f.name) : 0;
+      const balance = Number(f.balance)||0;
+      const saved = Number(f.saved)||0;
+      let contributed = 0;
+      if(typeof sinkingContributionV29 === 'function') contributed = sinkingContributionV29(f.name);
+      return balance + saved + contributed - spent;
+    });
+  }
+
+  function needsReviewV31(){
+    return (app.transactions || []).filter(t => currentMonthV31(t) && String(t.category||'') === 'Needs Review').length;
+  }
+
+  function currentMonthCountV31(){
+    return (app.transactions || []).filter(currentMonthV31).length;
+  }
+
+  function schwabLabelV31(){
+    const latest = latestSchwabTxV31();
+    if(!latest) return '—';
+    return `${esc(latest.date)}<div class="tiny">${esc(latest.description || latest.rawDescription || '')}</div>`;
+  }
+
+  function metricV31(label,value,cls){
+    return `<div class="metric"><div class="label">${label}</div><div class="value ${cls||''}">${value}</div></div>`;
+  }
+
+  window.renderTopMetricsV31 = function(){
+    const top = document.getElementById('topMetrics');
+    if(!top) return;
+    const checking = checkingNowV31();
+    const left = monthlySpendLeftV31();
+    const sink = sinkingNetV31();
+    const needs = needsReviewV31();
+
+    top.innerHTML =
+      metricV31('Checking now', money(checking), checking < 2500 ? 'warn' : 'ok') +
+      metricV31('Monthly spend left', money(left), left < 0 ? 'bad' : left < 400 ? 'warn' : 'ok') +
+      metricV31('Sinking fund net', money(sink), sink < 0 ? 'bad' : 'ok') +
+      metricV31('Needs review', needs, needs ? 'warn' : 'ok') +
+      metricV31('Sheet sync', 'Connected', 'ok') +
+      metricV31('Budget month', esc(app.month || '—'), '') +
+      metricV31('Current-month tx', currentMonthCountV31(), '') +
+      metricV31('Latest Schwab balance row', schwabLabelV31(), '');
+    top.dataset.loaded = 'true';
+  };
+
+  const oldRenderDailyV31 = window.renderDaily;
+  window.renderDaily = function(){
+    if(typeof oldRenderDailyV31 === 'function') oldRenderDailyV31.apply(this, arguments);
+    renderTopMetricsV31();
+  };
+
+  const oldRenderV31 = window.render;
+  window.render = function(){
+    if(typeof oldRenderV31 === 'function') oldRenderV31.apply(this, arguments);
+    renderTopMetricsV31();
+  };
+
+  try { renderTopMetricsV31(); } catch(e) { console.warn('v31 metrics skipped', e); }
 })();
 </script>
 
