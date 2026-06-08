@@ -487,3 +487,26 @@ function closeMonthV26_(payload) {
 
   return { ok:true, nextMonth:nextMonth };
 }
+
+
+/**
+ * v30 split helpers
+ * Safely parses the Transactions.Splits JSON column.
+ */
+function parseSplitsV29_(value) {
+  if (value === null || value === undefined || value === '') return [];
+  try {
+    var parsed = JSON.parse(String(value));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+/**
+ * Safely serializes transaction splits for the Transactions.Splits column.
+ */
+function stringifySplitsV29_(splits) {
+  if (!splits || !Array.isArray(splits) || splits.length === 0) return '';
+  return JSON.stringify(splits);
+}
