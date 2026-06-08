@@ -233,7 +233,6 @@ function buildAppFromSheet() {
       category: fund || category || String(getValue(r, ['Type'], 'Needs Review')),
       treatment: String(getValue(r, ['Treatment'], 'Auto')),
       splits: parseSplitsV29_(getValue(r, ['Splits'], '')),
-      splits: parseSplitsV29_(getValue(r, ['Splits'], '')),
       runningBalance: getValue(r, ['Running Balance', 'Balance After', 'RunningBalance'], '') === '' ? undefined : asNum(getValue(r, ['Running Balance', 'Balance After', 'RunningBalance'], ''))
     };
   }).filter(t => t.date || t.description || t.amount);
@@ -366,63 +365,53 @@ function updateReceivedPaychecks(transactions) {
   }
 }
 
-
-
 function saveTransactions(transactions) {
-  var ss = SpreadsheetApp.openById(typeof SPREADSHEET_ID !== 'undefined' ? SPREADSHEET_ID : '12DS_ocjW4O70RJeUSP3tO9YdBYnrFCPyr3K4c_5PKGE');
-  var sheet = ss.getSheetByName('Transactions') || ss.insertSheet('Transactions');
+  const sheetName = 'Transactions';
+  let sh = getSheet(sheetName);
+  if (!sh) sh = ss().insertSheet(sheetName);
 
-  var headers = [
-    'Transaction ID','Date','Posted','Imported Date','Source','Account','Description','Raw Description',
-    'Merchant','Amount','Owner','Purchased By','Type','Treatment','Category','Fund','Month',
-    'Reviewed','Notes','Running Balance','Splits','Import Batch ID'
+  const headers = [
+    'Transaction ID', 'Date', 'Imported Date', 'Account', 'Description', 'Merchant',
+    'Amount', 'Type', 'Treatment', 'Category', 'Fund', 'Month', 'Reviewed', 'Notes', 'Splits',
+    'Owner', 'Source', 'Posted', 'Purchased By', 'Raw Description', 'Running Balance'
   ];
 
-  if (sheet.getMaxColumns() < headers.length) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
-  }
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-
-  if (sheet.getLastRow() > 1) {
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).clearContent();
-  }
-
-  transactions = transactions || [];
-  var rows = transactions.map(function(t) {
+  const rows = (transactions || []).map(t => {
+    const category = String(t.category || '');
+    const type = ['Debt Payment','Loan Payment','Payment / Transfer','Income'].includes(category) ? category : 'Expense';
+    const month = monthFromDate(t.date, '');
     return [
-      t.id || t.transactionId || '',
+      t.id || Utilities.getUuid(),
       t.date || '',
       t.posted || '',
-      t.importedDate || new Date(),
-      t.source || '',
       t.account || '',
       t.description || '',
-      t.rawDescription || '',
       t.merchant || '',
-      Number(t.amount) || 0,
-      t.owner || '',
-      t.purchasedBy || '',
-      t.type || '',
+      asNum(t.amount),
+      type,
       t.treatment || 'Auto',
-      t.category || 'Needs Review',
+      category,
       t.fund || '',
-      t.month || (String(t.date || '').substring(0, 7)),
-      t.reviewed === true || t.reviewed === 'TRUE',
+      month,
+      true,
       t.notes || '',
-      t.runningBalance === undefined || t.runningBalance === null || t.runningBalance === '' ? '' : Number(t.runningBalance),
       stringifySplitsV29_(t.splits),
-      t.importBatchId || ''
+      t.owner || '',
+      t.source || '',
+      t.posted || '',
+      t.purchasedBy || '',
+      t.rawDescription || t.description || '',
+      t.runningBalance === undefined || t.runningBalance === null || t.runningBalance === '' ? '' : asNum(t.runningBalance)
     ];
   });
 
-  if (rows.length) {
-    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
-  }
-
-  return { ok: true, count: rows.length };
+  sh.clearContents();
+  if (sh.getMaxColumns() < headers.length) sh.insertColumnsAfter(sh.getMaxColumns(), headers.length - sh.getMaxColumns());
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (rows.length) sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  sh.autoResizeColumns(1, headers.length);
+  return rows.length;
 }
-
-
 
 
 /**
@@ -499,23 +488,15 @@ function closeMonthV26_(payload) {
 }
 
 
-/**
- * v30 split helpers
- * Safely parses the Transactions.Splits JSON column.
- */
 function parseSplitsV29_(value) {
   if (value === null || value === undefined || value === '') return [];
   try {
-    var parsed = JSON.parse(String(value));
+    const parsed = JSON.parse(String(value));
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
     return [];
   }
 }
-
-/**
- * Safely serializes transaction splits for the Transactions.Splits column.
- */
 function stringifySplitsV29_(splits) {
   if (!splits || !Array.isArray(splits) || splits.length === 0) return '';
   return JSON.stringify(splits);
