@@ -367,30 +367,27 @@ function updateReceivedPaychecks(transactions) {
 }
 
 
+
 function saveTransactions(transactions) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = SpreadsheetApp.openById(typeof SPREADSHEET_ID !== 'undefined' ? SPREADSHEET_ID : '12DS_ocjW4O70RJeUSP3tO9YdBYnrFCPyr3K4c_5PKGE');
   var sheet = ss.getSheetByName('Transactions') || ss.insertSheet('Transactions');
 
   var headers = [
     'Transaction ID','Date','Posted','Imported Date','Source','Account','Description','Raw Description',
     'Merchant','Amount','Owner','Purchased By','Type','Treatment','Category','Fund','Month',
-    'Reviewed','Notes','Running Balance','Splits'
+    'Reviewed','Notes','Running Balance','Splits','Import Batch ID'
   ];
 
-  // Ensure header has exactly these columns. This prevents 22-vs-21 range errors.
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  var lastCol = sheet.getLastColumn();
-  if (lastCol > headers.length) {
-    sheet.deleteColumns(headers.length + 1, lastCol - headers.length);
+  if (sheet.getMaxColumns() < headers.length) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   }
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
 
   if (sheet.getLastRow() > 1) {
     sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).clearContent();
   }
 
   transactions = transactions || [];
-  if (!transactions.length) return { ok: true, count: 0 };
-
   var rows = transactions.map(function(t) {
     return [
       t.id || t.transactionId || '',
@@ -413,13 +410,18 @@ function saveTransactions(transactions) {
       t.reviewed === true || t.reviewed === 'TRUE',
       t.notes || '',
       t.runningBalance === undefined || t.runningBalance === null || t.runningBalance === '' ? '' : Number(t.runningBalance),
-      stringifySplitsV29_(t.splits)
+      stringifySplitsV29_(t.splits),
+      t.importBatchId || ''
     ];
   });
 
-  sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  if (rows.length) {
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
+
   return { ok: true, count: rows.length };
 }
+
 
 
 
