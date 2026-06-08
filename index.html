@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Fairman Family Budget Dashboard v29</title>
+<title>Fairman Family Budget Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#f7f3ea;--card:#fffdf8;--ink:#263238;--muted:#667085;--line:#d0d5dd;--green:#dff4df;--pink:#f7dddd;--blue:#dbeafe;--cream:#fff7ed;--bad:#b42318;--warn:#b54708;--ok:#027a48;--dark:#263238}
@@ -40,7 +40,7 @@ body.loading main{opacity:1!important;pointer-events:auto!important}
 
 </head>
 <body>
-<header><h1>Fairman Family Budget Dashboard v29</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+<header><h1>Fairman Family Budget Dashboard</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 
 </div>
 <main>
@@ -2979,6 +2979,145 @@ button.tiny-btn {
 
   addSplitNoticeV29();
   try { if(typeof render==='function' && window.app) render(); } catch(e){ console.warn('v29 render skipped', e); }
+})();
+</script>
+
+
+<script>
+/* ===== v30: Checking Now must trust latest Schwab running balance =====
+   Fixes the Apple Card $2,000 payment being added back into checking.
+   Also removes duplicated top metric rows caused by layered patches.
+*/
+(function(){
+  function currentMonthV30(t){
+    if(!t) return false;
+    if(typeof currentMonthTxV21 === 'function') return currentMonthTxV21(t);
+    if(typeof inBudgetMonth === 'function') return inBudgetMonth(t);
+    return String(t.date||'').slice(0,7) === app.month;
+  }
+
+  function latestSchwabTransactionV30(){
+    const schwab = (app.transactions || [])
+      .filter(t => {
+        const src = String(t.source || '').toLowerCase();
+        const acct = String(t.account || '').toLowerCase();
+        return (src.includes('schwab') || acct.includes('schwab')) &&
+               t.runningBalance !== undefined &&
+               t.runningBalance !== null &&
+               t.runningBalance !== '' &&
+               !isNaN(Number(t.runningBalance));
+      })
+      .sort((a,b) => {
+        const dateCompare = String(b.date||'').localeCompare(String(a.date||''));
+        if(dateCompare !== 0) return dateCompare;
+        const postedCompare = String(b.posted||'').localeCompare(String(a.posted||''));
+        if(postedCompare !== 0) return postedCompare;
+        return String(b.id||'').localeCompare(String(a.id||''));
+      });
+
+    return schwab[0] || null;
+  }
+
+  window.checkingNowV30 = function(){
+    const latest = latestSchwabTransactionV30();
+    if(latest) return Number(latest.runningBalance) || 0;
+    if(app.latestSchwabBalance !== undefined && app.latestSchwabBalance !== null && app.latestSchwabBalance !== '') {
+      return Number(app.latestSchwabBalance) || 0;
+    }
+    return 0;
+  };
+
+  function latestSchwabLabelV30(){
+    const latest = latestSchwabTransactionV30();
+    if(!latest) return '—';
+    return `${esc(latest.date)}<div class="tiny">${esc(latest.description || latest.rawDescription || '')}</div>`;
+  }
+
+  function monthlySpendLeftV30(){
+    const totalBudget = sum(app.spendingBudgets || [], b=>Number(b.budget)||0);
+    const spent = sum(app.spendingBudgets || [], b=>txSpendByCategory(b.name));
+    return totalBudget - spent;
+  }
+
+  function sinkingNetV30(){
+    return sum(app.sinkingFunds || [], f=>{
+      if(f.name === 'Debt Payoff' && typeof debtPayoffExtraFromSplitsV29 === 'function'){
+        return debtPayoffExtraFromSplitsV29() - (Number(f.budget)||0);
+      }
+      const spent = txSpendByCategory(f.name);
+      const saved = Number(f.saved)||0;
+      const balance = Number(f.balance)||0;
+      let contributed = 0;
+      if(typeof sinkingContributionV29 === 'function') contributed = sinkingContributionV29(f.name);
+      return balance + saved + contributed - spent;
+    });
+  }
+
+  function needsReviewV30(){
+    return (app.transactions || []).filter(t=>currentMonthV30(t) && String(t.category||'') === 'Needs Review').length;
+  }
+
+  function currentMonthTxCountV30(){
+    return (app.transactions || []).filter(t=>currentMonthV30(t)).length;
+  }
+
+  function renderTopMetricsV30(){
+    const checking = checkingNowV30();
+    const spendLeft = monthlySpendLeftV30();
+    const sink = sinkingNetV30();
+    const needs = needsReviewV30();
+    const top = document.getElementById('topMetrics');
+    if(!top) return;
+
+    top.dataset.loaded = 'true';
+    top.innerHTML = [
+      ['Checking now', money(checking), checking < 2500 ? 'warn' : 'ok'],
+      ['Monthly spend left', money(spendLeft), spendLeft < 0 ? 'bad' : spendLeft < 400 ? 'warn' : 'ok'],
+      ['Sinking fund net', money(sink), sink < 0 ? 'bad' : 'ok'],
+      ['Needs review', needs, needs ? 'warn' : 'ok'],
+      ['Sheet sync', 'Connected', 'ok'],
+      ['Budget month', app.month || '—', ''],
+      ['Current-month tx', currentMonthTxCountV30(), ''],
+      ['Latest Schwab balance row', latestSchwabLabelV30(), '']
+    ].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]||''}">${m[1]}</div></div>`).join('');
+  }
+
+  if(typeof cashflowRows === 'function'){
+    const oldCashflowRowsV30 = cashflowRows;
+    window.cashflowRows = function(){
+      const rows = oldCashflowRowsV30();
+      if(!rows || !rows.length) return rows;
+      const realChecking = checkingNowV30();
+      const latest = latestSchwabTransactionV30();
+      rows[0][0] = latest ? latest.date : (app.today || rows[0][0]);
+      rows[0][1] = 'Latest Schwab running balance';
+      rows[0][2] = 0;
+      rows[0][3] = realChecking;
+      rows[0][4] = 'Start';
+
+      let bal = realChecking;
+      for(let i=1;i<rows.length;i++){
+        bal += Number(rows[i][2]) || 0;
+        rows[i][3] = bal;
+        rows[i][4] = bal < 0 ? 'Negative' : bal < 2500 ? 'Low' : 'OK';
+      }
+      return rows;
+    };
+  }
+
+  const oldRenderDailyV30 = window.renderDaily;
+  window.renderDaily = function(){
+    if(typeof oldRenderDailyV30 === 'function') oldRenderDailyV30.apply(this, arguments);
+    renderTopMetricsV30();
+  };
+
+  try {
+    if(typeof render === 'function' && window.app) render();
+    else renderTopMetricsV30();
+  } catch(e) {
+    console.warn('v30 render skipped', e);
+    renderTopMetricsV30();
+  }
 })();
 </script>
 
