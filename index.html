@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Fairman Family Budget Dashboard v36 Stable</title>
+<title>Fairman Family Budget Dashboard v38 Split Stable</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#f7f3ea;--card:#fffdf8;--ink:#263238;--muted:#667085;--line:#d0d5dd;--green:#dff4df;--pink:#f7dddd;--blue:#dbeafe;--cream:#fff7ed;--bad:#b42318;--warn:#b54708;--ok:#027a48;--dark:#263238}
@@ -40,7 +40,7 @@ body.loading main{opacity:1!important;pointer-events:auto!important}
 
 </head>
 <body>
-<header><h1>Fairman Family Budget Dashboard v36 Stable</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+<header><h1>Fairman Family Budget Dashboard v38 Split Stable</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 
 </div>
 <main>
@@ -1209,7 +1209,7 @@ render();
    To make the API URL work in incognito/for both Joe and Katy, paste your Apps Script Web App URL below.
    Example: const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/.../exec';
 */
-const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbzZV0hPGiWehLkAkJm15z4vUB3utNCt85DwpoWj6hfCmxREyEZmvQVkDiXwlNdjAudR/exec';
+const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbyL7Zy1YCFHpe2e20ZWb3ApirVPuRWszNtKV07gS7ggebiGW6S7wUkNJwZ-Gd4IdsTd/exec';
 
 save = function(){ /* no-op: Google Sheets is the database */ };
 load = function(){ return structuredClone ? structuredClone(initialData) : JSON.parse(JSON.stringify(initialData)); };
@@ -3193,6 +3193,311 @@ button.tiny-btn {
   window.render=function(){ if(typeof prevRender==='function') { try{prevRender();}catch(e){console.warn('old render failed',e);} } renderDaily(); renderCashflow(); renderBudgets(); renderDebts(); document.body.classList.remove('loading'); };
   // Keep import button alive if previous listeners got clobbered.
   setTimeout(()=>{ const btn=document.getElementById('importBtn'); if(btn && typeof importCsvFiles==='function'){ btn.onclick=(e)=>{ e.preventDefault(); importCsvFiles(); }; } render(); },0);
+})();
+</script>
+
+
+<style>
+/* ===== v38 split-stable final layer ===== */
+.split-box{border:1px solid #d0d5dd;border-radius:8px;padding:8px;margin-top:6px;background:#fff}
+.split-line{display:grid;grid-template-columns:1.35fr 1.25fr 1fr auto;gap:6px;align-items:center;margin:5px 0}
+.split-summary{font-size:12px;color:#475467;margin-top:4px}
+.split-ok{color:#027a48;font-weight:700}.split-warning{color:#b42318;font-weight:700}
+button.tiny-btn{padding:4px 7px;font-size:12px}
+@media(max-width:900px){.split-line{grid-template-columns:1fr}}
+</style>
+
+<script>
+/* ===== v38: stable split transactions, no disappearing rows =====
+   This is intentionally the final layer. It does not remove the old app; it overrides the broken
+   transaction rendering/saving paths so splits are stored in app.transactions immediately.
+*/
+(function(){
+  const TREATMENTS_V38 = ['Auto','Expense','Reimbursement / Credit','Sinking Fund Contribution','Debt Payment','Debt Payoff Extra','Loan Payment','Ignore / Transfer','Income'];
+  const VARIABLE_V38 = new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']);
+
+  function num(v){ const n=Number(String(v??'').replace(/[$,]/g,'')); return Number.isFinite(n)?n:0; }
+  function abs(v){ return Math.abs(num(v)); }
+  function inMonth(t){ return String(t?.date||'').slice(0,7) === String(app?.month||''); }
+  window.inBudgetMonth = inMonth;
+  window.currentMonthTxV21 = inMonth;
+  function tx(id){ return (app.transactions||[]).find(t=>String(t.id)===String(id)); }
+  function splits(t){ if(!t) return []; if(!Array.isArray(t.splits)) t.splits=[]; return t.splits; }
+  function treatment(t){ return t?.treatment || t?.type || 'Auto'; }
+  function isAppleLike(t){ const s=String((t?.source||'')+' '+(t?.account||'')).toLowerCase(); return s.includes('apple') || (s.includes('card') && !s.includes('schwab')); }
+  function isBudget(cat){ return (app.spendingBudgets||[]).some(b=>b.name===cat); }
+  function isFund(cat){ return (app.sinkingFunds||[]).some(f=>f.name===cat); }
+  function tracked(cat){ return isBudget(cat) || isFund(cat) || VARIABLE_V38.has(String(cat||'')); }
+  function cats(){
+    const base = typeof categories === 'function' ? categories() : [];
+    const accounts = [...(app.creditCards||[]).map(c=>c.name), ...(app.loans||[]).map(l=>l.name)];
+    return [...new Set([...base, ...accounts, 'Debt Payoff'])].filter(Boolean).sort();
+  }
+  function catOptions(selected){ return cats().map(c=>`<option value="${esc(c)}" ${selected===c?'selected':''}>${esc(c)}</option>`).join(''); }
+  function treatmentOptions(selected){ return TREATMENTS_V38.map(o=>`<option value="${esc(o)}" ${selected===o?'selected':''}>${esc(o)}</option>`).join(''); }
+  function spendFrom(t, amount, tr){
+    amount=num(amount);
+    if(['Ignore / Transfer','Income','Sinking Fund Contribution','Debt Payment','Loan Payment'].includes(tr)) return 0;
+    if(tr==='Reimbursement / Credit') return -Math.abs(amount);
+    if(tr==='Expense' || tr==='Debt Payoff Extra') return Math.abs(amount);
+    if(isAppleLike(t)) return amount>0 ? amount : 0;
+    return amount<0 ? Math.abs(amount) : -Math.abs(amount);
+  }
+  window.transactionSpendAmount = function(t){
+    if(!inMonth(t)) return 0;
+    const sp=splits(t);
+    if(sp.length) return sp.reduce((a,s)=>a+(tracked(s.category)?spendFrom(t,s.amount,s.treatment||'Auto'):0),0);
+    if(!tracked(t.category)) return 0;
+    return spendFrom(t,t.amount,treatment(t));
+  };
+  window.txSpendByCategory = function(cat){
+    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
+      const sp=splits(t);
+      if(sp.length) return a + sp.filter(s=>s.category===cat).reduce((x,s)=>x+(tracked(s.category)?spendFrom(t,s.amount,s.treatment||'Auto'):0),0);
+      return a + (t.category===cat ? transactionSpendAmount(t) : 0);
+    },0);
+  };
+  window.debtPayoffExtraFromSplitsV29 = function(){
+    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
+      const sp=splits(t);
+      if(sp.length) return a + sp.filter(s=>s.category==='Debt Payoff' || s.treatment==='Debt Payoff Extra').reduce((x,s)=>x+abs(s.amount),0);
+      return a + (t.category==='Debt Payoff' ? abs(t.amount) : 0);
+    },0);
+  };
+  window.extraDebtPaidThisMonth = window.debtPayoffExtraFromSplitsV29;
+  window.extraDebtPayoffV21 = window.debtPayoffExtraFromSplitsV29;
+
+  function accountPaidFromSplits(accountName, paymentTreatment){
+    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
+      const sp=splits(t);
+      if(sp.length) return a + sp.filter(s=>s.category===accountName && s.treatment===paymentTreatment).reduce((x,s)=>x+abs(s.amount),0);
+      return a;
+    },0);
+  }
+  const oldPaidCardsV36 = window.paidCardsV36;
+  window.paidCardsV36 = function(){
+    const out = oldPaidCardsV36 ? oldPaidCardsV36() : {};
+    (app.creditCards||[]).forEach(c=>{
+      const splitPaid = accountPaidFromSplits(c.name, 'Debt Payment');
+      if(splitPaid>0) out[c.name]=splitPaid;
+    });
+    return out;
+  };
+  const oldPaidLoansV36 = window.paidLoansV36;
+  window.paidLoansV36 = function(){
+    const out = oldPaidLoansV36 ? oldPaidLoansV36() : {};
+    (app.loans||[]).forEach(l=>{
+      const splitPaid = accountPaidFromSplits(l.name, 'Loan Payment');
+      if(splitPaid>0) out[l.name]=splitPaid;
+    });
+    return out;
+  };
+  window.sinkingFundContributionAmount = function(name){
+    if(String(name||'').trim()==='Debt Payoff') return debtPayoffExtraFromSplitsV29();
+    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
+      const sp=splits(t);
+      if(sp.length) return a + sp.filter(s=>s.category===name && s.treatment==='Sinking Fund Contribution').reduce((x,s)=>x+abs(s.amount),0);
+      return a + (t.category===name && treatment(t)==='Sinking Fund Contribution' ? abs(t.amount) : 0);
+    },0);
+  };
+  window.sinkingFundPosition = function(f){
+    if(String(f.name||'').trim()==='Debt Payoff') return debtPayoffExtraFromSplitsV29() - num(f.budget);
+    return num(f.balance)+num(f.saved)+sinkingFundContributionAmount(f.name)-txSpendByCategory(f.name);
+  };
+
+  function splitTotal(t){ return splits(t).reduce((a,s)=>a+abs(s.amount),0); }
+  function splitSummary(t){
+    const total=splitTotal(t), target=abs(t.amount), diff=target-total;
+    const cls=Math.abs(diff)<0.01?'split-ok':'split-warning';
+    return `<div class="split-summary ${cls}">Split total ${money(total)} of ${money(target)}${Math.abs(diff)<0.01?' ✓':' — difference '+money(diff)}</div>`;
+  }
+  function splitEditor(t){
+    const sp=splits(t);
+    if(!sp.length){
+      const isApplePayment = String((t.description||'')+' '+(t.rawDescription||'')).toUpperCase().includes('APPLECARD');
+      return `<div class="split-summary"><button type="button" class="tiny-btn" data-add-split="${esc(t.id)}">Split</button> ${isApplePayment?`<button type="button" class="tiny-btn" data-auto-apple="${esc(t.id)}">Auto-split Apple payment</button>`:''}</div>`;
+    }
+    return `<div class="split-box" data-split-box="${esc(t.id)}"><b>Splits</b>${
+      sp.map((s,i)=>`<div class="split-line">
+        <select data-split-cat="${esc(t.id)}" data-split-idx="${i}">${catOptions(s.category)}</select>
+        <select data-split-treatment="${esc(t.id)}" data-split-idx="${i}">${treatmentOptions(s.treatment||'Auto')}</select>
+        <input type="number" step="0.01" data-split-amount="${esc(t.id)}" data-split-idx="${i}" value="${num(s.amount)}">
+        <button type="button" class="tiny-btn" data-remove-split="${esc(t.id)}" data-split-idx="${i}">Remove</button>
+      </div>`).join('')
+    }${splitSummary(t)}
+      <button type="button" class="tiny-btn" data-add-split="${esc(t.id)}">Add line</button>
+      <button type="button" class="tiny-btn" data-clear-splits="${esc(t.id)}">Clear splits</button>
+    </div>`;
+  }
+  function captureSplitEl(el){
+    const id = el.dataset.splitCat || el.dataset.splitTreatment || el.dataset.splitAmount || '';
+    if(!id) return;
+    const t=tx(id); if(!t) return;
+    const idx=Number(el.dataset.splitIdx||0);
+    const sp=splits(t);
+    while(sp.length<=idx) sp.push({category:t.category||'Needs Review', treatment:'Expense', amount:0});
+    if(el.dataset.splitCat!==undefined) sp[idx].category = el.value;
+    if(el.dataset.splitTreatment!==undefined) sp[idx].treatment = el.value;
+    if(el.dataset.splitAmount!==undefined) sp[idx].amount = num(el.value);
+  }
+  function captureVisibleSplits(){ document.querySelectorAll('[data-split-cat],[data-split-treatment],[data-split-amount]').forEach(captureSplitEl); }
+  function captureVisibleTransactionEditsV38(){
+    captureVisibleSplits();
+    document.querySelectorAll('[data-cat]').forEach(sel=>{ const t=tx(sel.dataset.cat); if(t) t.category=sel.value; });
+    document.querySelectorAll('[data-owner]').forEach(sel=>{ const t=tx(sel.dataset.owner); if(t) t.owner=sel.value==='Shared/Unknown'?'':sel.value; });
+    document.querySelectorAll('[data-treatment]').forEach(sel=>{ const t=tx(sel.dataset.treatment); if(t) t.treatment=sel.value; });
+  }
+  window.captureVisibleTransactionEdits = captureVisibleTransactionEditsV38;
+  function refreshSummaries(){
+    try{ renderDaily(); }catch(e){ console.warn('v38 renderDaily failed', e); }
+    try{ renderCashflow(); }catch(e){}
+    try{ renderBudgets(); }catch(e){}
+    try{ renderDebts(); }catch(e){}
+  }
+  function updateSplitSummaryOnly(t){
+    const box=document.querySelector(`[data-split-box="${CSS.escape(String(t.id))}"]`);
+    if(!box) return;
+    const old=box.querySelector('.split-summary');
+    if(old) old.outerHTML=splitSummary(t);
+    const row=box.closest('tr');
+    if(row){
+      const cells=row.querySelectorAll('td');
+      if(cells.length) cells[cells.length-1].textContent = money(transactionSpendAmount(t));
+    }
+  }
+
+  window.renderTransactions = function(){
+    captureVisibleSplits();
+    const ownerFilter=document.getElementById('filterOwner')?.value || '';
+    const catFilter=document.getElementById('filterCategory')?.value || '';
+    const q=(document.getElementById('searchTx')?.value || '').toLowerCase();
+    const showAll = window.txShowAllMonthsV21 || false;
+    const pageSize = window.txPageSizeV21 || 50;
+    window.txPageV21 = window.txPageV21 || 1;
+
+    let list=(app.transactions||[]).filter(t=>{
+      if(!showAll && !inMonth(t)) return false;
+      const owner=t.owner||'Shared/Unknown';
+      const text=String((t.description||'')+' '+(t.rawDescription||'')+' '+(t.category||'')).toLowerCase();
+      const splitMatch=splits(t).some(s=>s.category===catFilter);
+      return (!ownerFilter||owner===ownerFilter) && (!catFilter||t.category===catFilter||splitMatch) && (!q||text.includes(q));
+    }).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')) || String(b.posted||'').localeCompare(String(a.posted||'')));
+
+    const total=list.length, pages=Math.max(1, Math.ceil(total/pageSize));
+    if(window.txPageV21>pages) window.txPageV21=pages;
+    const page=list.slice((window.txPageV21-1)*pageSize, window.txPageV21*pageSize);
+
+    let controls=`<div class="toolbar"><button type="button" id="txPrevV38">Prev</button><span class="small">Page ${window.txPageV21} of ${pages} (${total} rows)</span><button type="button" id="txNextV38">Next</button><label class="small"><input type="checkbox" id="txAllMonthsV38" ${showAll?'checked':''} style="width:auto"> Show all months</label><select id="txPageSizeV38"><option ${pageSize===25?'selected':''}>25</option><option ${pageSize===50?'selected':''}>50</option><option ${pageSize===100?'selected':''}>100</option></select></div>`;
+    let rows='<tr><th>Date</th><th>Source</th><th>Owner</th><th>Description</th><th>Category</th><th>Treatment</th><th class="num">Amount</th><th class="num">Budget Impact</th></tr>';
+    page.forEach(t=>{
+      const ownerSel=`<select data-owner="${esc(t.id)}"><option ${!t.owner?'selected':''}>Shared/Unknown</option><option ${t.owner==='Joe'?'selected':''}>Joe</option><option ${t.owner==='Katy'?'selected':''}>Katy</option></select>`;
+      const catSel=`<select data-cat="${esc(t.id)}">${catOptions(t.category)}</select>`;
+      const trSel=`<select data-treatment="${esc(t.id)}">${treatmentOptions(treatment(t))}</select>`;
+      const impact=transactionSpendAmount(t);
+      rows+=`<tr><td>${esc(t.date)}</td><td>${esc(t.source)}</td><td>${ownerSel}</td><td><b>${esc(t.description)}</b><div class="tiny">${esc(t.purchasedBy||'')}</div>${splitEditor(t)}</td><td>${catSel}</td><td>${trSel}</td><td class="num">${money(t.amount)}</td><td class="num ${impact<0?'ok':impact>0?'':'tiny'}">${money(impact)}</td></tr>`;
+    });
+    document.getElementById('txTable').innerHTML = controls + rows;
+    document.getElementById('txPrevV38')?.addEventListener('click',()=>{window.txPageV21=Math.max(1,window.txPageV21-1); renderTransactions();});
+    document.getElementById('txNextV38')?.addEventListener('click',()=>{window.txPageV21=Math.min(pages,window.txPageV21+1); renderTransactions();});
+    document.getElementById('txAllMonthsV38')?.addEventListener('change',e=>{window.txShowAllMonthsV21=e.target.checked; window.txPageV21=1; renderTransactions();});
+    document.getElementById('txPageSizeV38')?.addEventListener('change',e=>{window.txPageSizeV21=Number(e.target.value)||50; window.txPageV21=1; renderTransactions();});
+  };
+
+  window.saveTransactionEdits = function(){
+    captureVisibleTransactionEditsV38();
+    refreshSummaries();
+    const btn=document.getElementById('saveChanges');
+    if(btn){ const old=btn.textContent; btn.textContent='Saved ✓'; btn.classList.add('saved'); setTimeout(()=>{btn.textContent=old||'Save Changes';btn.classList.remove('saved');},1400); }
+    if(typeof queueAutoSync==='function') queueAutoSync('transaction edits with splits');
+  };
+
+  const oldQueue = window.queueAutoSync;
+  window.queueAutoSync = function(reason='change'){
+    captureVisibleTransactionEditsV38();
+    if(typeof oldQueue==='function') return oldQueue(reason);
+  };
+  window.pushTransactionsToSheet = async function(){
+    try{
+      captureVisibleTransactionEditsV38();
+      if(typeof setSyncStatus==='function') setSyncStatus('Saving transactions, including splits, to Google Sheets...', 'warn');
+      const json = await callSheetApi({action:'saveAll', app});
+      if(typeof setSyncStatus==='function') setSyncStatus('Saved ' + (json.count ?? (app.transactions||[]).length) + ' transaction(s), including splits, at ' + new Date().toLocaleTimeString(), 'ok');
+      if(typeof loadFromSheet==='function') await loadFromSheet();
+    }catch(err){
+      console.error(err);
+      if(typeof setSyncStatus==='function') setSyncStatus('Save failed: ' + err.message, 'bad');
+      alert('Save failed: ' + err.message);
+    }
+  };
+
+  document.addEventListener('input', e=>{
+    const el=e.target;
+    if(el?.dataset?.splitAmount!==undefined){
+      captureSplitEl(el);
+      const t=tx(el.dataset.splitAmount);
+      if(t) updateSplitSummaryOnly(t);
+      e.stopImmediatePropagation();
+    }
+  }, true);
+  document.addEventListener('change', e=>{
+    const el=e.target;
+    if(!el?.dataset) return;
+    if(el.dataset.splitCat!==undefined || el.dataset.splitTreatment!==undefined || el.dataset.splitAmount!==undefined){
+      captureSplitEl(el);
+      const id=el.dataset.splitCat||el.dataset.splitTreatment||el.dataset.splitAmount;
+      const t=tx(id);
+      if(t) updateSplitSummaryOnly(t);
+      refreshSummaries();
+      if(typeof queueAutoSync==='function') queueAutoSync('split update');
+      e.stopImmediatePropagation();
+      return;
+    }
+    if(el.dataset.cat!==undefined || el.dataset.owner!==undefined || el.dataset.treatment!==undefined){
+      captureVisibleSplits();
+    }
+  }, true);
+  document.addEventListener('click', e=>{
+    const add=e.target.closest('[data-add-split]');
+    const auto=e.target.closest('[data-auto-apple]');
+    const rem=e.target.closest('[data-remove-split]');
+    const clear=e.target.closest('[data-clear-splits]');
+    if(add){
+      captureVisibleTransactionEditsV38();
+      const t=tx(add.dataset.addSplit); if(t){ splits(t).push({category:t.category||'Needs Review', treatment:'Expense', amount:0}); renderTransactions(); }
+      e.preventDefault(); e.stopImmediatePropagation(); return;
+    }
+    if(auto){
+      captureVisibleTransactionEditsV38();
+      const t=tx(auto.dataset.autoApple);
+      if(t){
+        const amt=abs(t.amount);
+        const apple=(app.creditCards||[]).find(c=>String(c.name).toLowerCase().includes('apple card')&&String(c.name).toLowerCase().includes('joe'));
+        const min=apple?num(apple.min):0;
+        t.splits=[{category:apple?apple.name:'Apple Card - Joe', treatment:'Debt Payment', amount:Math.min(amt,min)}, {category:'Debt Payoff', treatment:'Debt Payoff Extra', amount:Math.max(0, amt-min)}].filter(s=>num(s.amount)>0);
+        t.category='Debt Payment'; t.treatment='Debt Payment';
+        renderTransactions(); refreshSummaries(); if(typeof queueAutoSync==='function') queueAutoSync('auto-split Apple payment');
+      }
+      e.preventDefault(); e.stopImmediatePropagation(); return;
+    }
+    if(rem){
+      captureVisibleTransactionEditsV38();
+      const t=tx(rem.dataset.removeSplit);
+      if(t){ splits(t).splice(Number(rem.dataset.splitIdx||0),1); renderTransactions(); refreshSummaries(); if(typeof queueAutoSync==='function') queueAutoSync('remove split'); }
+      e.preventDefault(); e.stopImmediatePropagation(); return;
+    }
+    if(clear){
+      const t=tx(clear.dataset.clearSplits);
+      if(t && confirm('Clear splits for this transaction?')){ t.splits=[]; renderTransactions(); refreshSummaries(); if(typeof queueAutoSync==='function') queueAutoSync('clear splits'); }
+      e.preventDefault(); e.stopImmediatePropagation(); return;
+    }
+  }, true);
+
+  setTimeout(()=>{
+    (app.transactions||[]).forEach(t=>{ if(!Array.isArray(t.splits)) t.splits=[]; });
+    document.getElementById('saveChanges')?.addEventListener('click', e=>{ e.preventDefault(); saveTransactionEdits(); }, true);
+    document.getElementById('pushSheet')?.addEventListener('click', e=>{ e.preventDefault(); e.stopImmediatePropagation(); pushTransactionsToSheet(); }, true);
+    try{ renderTransactions(); refreshSummaries(); }catch(e){ console.warn('v38 initial render failed', e); }
+  },0);
 })();
 </script>
 

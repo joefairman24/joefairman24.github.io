@@ -628,3 +628,68 @@ function updatePaidStatusSheetsV36_(transactions) {
     }
   }
 }
+
+
+/* ===== v38 split-aware backend helpers ===== */
+function v38Abs_(v) {
+  var n = Number(String(v == null ? '' : v).replace(/[$,]/g, ''));
+  return isNaN(n) ? 0 : Math.abs(n);
+}
+function v38Norm_(s) {
+  return String(s || '').toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function v38SplitPaid_(t, itemName, paymentTreatment) {
+  var total = 0;
+  var splits = Array.isArray(t.splits) ? t.splits : parseSplitsV29_(t.splits);
+  splits.forEach(function(s) {
+    if (String(s.category || '') === String(itemName || '') && String(s.treatment || '') === paymentTreatment) {
+      total += v38Abs_(s.amount);
+    }
+  });
+  return total;
+}
+
+/**
+ * Override prior buildPaidMap so split payments do not count the entire parent transaction.
+ * Example: $2,000 Apple payment split into $310.58 Debt Payment and $1,689.42 Debt Payoff Extra
+ * makes Apple Card confirmed paid = $310.58, not $2,000.
+ */
+function buildPaidMap(items, transactions, typeName) {
+  var out = {};
+  (items || []).forEach(function(item) { out[item.name] = 0; });
+
+  (transactions || []).forEach(function(t) {
+    var splits = Array.isArray(t.splits) ? t.splits : parseSplitsV29_(t.splits);
+    if (splits.length) {
+      (items || []).forEach(function(item) {
+        out[item.name] = (out[item.name] || 0) + v38SplitPaid_(t, item.name, typeName);
+      });
+      return;
+    }
+
+    var cat = String(t.category || '');
+    var treatment = String(t.treatment || '');
+    if (cat !== typeName && treatment !== typeName) return;
+
+    var desc = v38Norm_((t.rawDescription || '') + ' ' + (t.description || ''));
+    var amount = v38Abs_(t.amount);
+    if (!amount) return;
+
+    (items || []).forEach(function(item) {
+      var keys = [];
+      (item.paymentKeywords || []).forEach(function(k) { if (k) keys.push(k); });
+      keys.push(item.name || '');
+      var name = String(item.name || '').toUpperCase();
+      if (name.indexOf('APPLE CARD') >= 0) keys = keys.concat(['APPLECARD GSBANK','APPLECARD','APPLE CARD']);
+      if (name.indexOf('BEST BUY') >= 0) keys.push('BEST BUY');
+      if (name.indexOf('LOWES') >= 0) keys = keys.concat(['LOWES','LOWE']);
+      if (name.indexOf('CHASE') >= 0 || name.indexOf('AMAZON PRIME') >= 0) keys = keys.concat(['CHASE','AMAZON PRIME VISA']);
+      if (name.indexOf('U.S. BANK') >= 0 || name.indexOf('US BANK') >= 0) keys = keys.concat(['US BANK','U S BANK','U.S. BANK']);
+      if (keys.map(v38Norm_).some(function(k) { return k && desc.indexOf(k) >= 0; })) {
+        out[item.name] = (out[item.name] || 0) + amount;
+      }
+    });
+  });
+
+  return out;
+}
