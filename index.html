@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Fairman Family Budget Dashboard v39 Cashflow Fix</title>
+<title>Fairman Family Budget Dashboard v40 Income Cashflow Fix</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#f7f3ea;--card:#fffdf8;--ink:#263238;--muted:#667085;--line:#d0d5dd;--green:#dff4df;--pink:#f7dddd;--blue:#dbeafe;--cream:#fff7ed;--bad:#b42318;--warn:#b54708;--ok:#027a48;--dark:#263238}
@@ -40,7 +40,7 @@ body.loading main{opacity:1!important;pointer-events:auto!important}
 
 </head>
 <body>
-<header><h1>Fairman Family Budget Dashboard v39 Cashflow Fix</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+<header><h1>Fairman Family Budget Dashboard v40 Income Cashflow Fix</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 
 </div>
 <main>
@@ -3696,6 +3696,111 @@ button.tiny-btn{padding:4px 7px;font-size:12px}
   };
 
   try{ renderCashflow(); renderDaily(); }catch(e){ console.warn('v39 cashflow initial render failed', e); }
+})();
+</script>
+
+
+<script>
+/* ===== v40: robust paycheck/income events in Cash Flow =====
+   v39 spread variable budgets correctly, but it compared paycheck dates as raw strings.
+   If the Sheet sends dates like 6/12/2026 or ISO timestamps, those comparisons can fail.
+   This override normalizes paycheck dates before deciding whether income is future/received.
+*/
+(function(){
+  function n(v){ const x=Number(String(v??'').replace(/[$,]/g,'')); return Number.isFinite(x)?x:0; }
+  function pad(x){ return String(x).padStart(2,'0'); }
+  function isoDate(v){
+    if(v===undefined || v===null || v==='') return '';
+    if(v instanceof Date && !isNaN(v)) return `${v.getFullYear()}-${pad(v.getMonth()+1)}-${pad(v.getDate())}`;
+    const s=String(v).trim();
+    let m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if(m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+    m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if(m){
+      let y=Number(m[3]); if(y<100) y+=2000;
+      return `${y}-${pad(m[1])}-${pad(m[2])}`;
+    }
+    const d=new Date(s);
+    if(!isNaN(d)) return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    return s;
+  }
+  function todayIso(){ return isoDate(typeof today==='function' ? today() : app.today || new Date()); }
+  function month(){ return String(app?.month || todayIso().slice(0,7)); }
+  function inMonth(t){ return isoDate(t?.date).slice(0,7)===month(); }
+  function desc(t){ return String((t?.description||'')+' '+(t?.rawDescription||'')).toLowerCase(); }
+  function isSchwab(t){ return String((t?.source||'')+' '+(t?.account||'')).toLowerCase().includes('schwab'); }
+
+  function paycheckActuallyPostedV40(p){
+    const pDate=isoDate(p?.date);
+    const today=todayIso();
+    // Future paychecks must appear in the forecast, even if the Sheet has a stale TRUE flag.
+    if(pDate > today) return false;
+
+    const target=Math.abs(n(p?.amount));
+    if(!target) return false;
+
+    // For past/today paychecks: trust either the explicit received flag or a matching payroll deposit.
+    if(p?.received===true || String(p?.received).toLowerCase()==='true') return true;
+
+    return (app.transactions||[]).some(t=>{
+      if(!inMonth(t) || !isSchwab(t)) return false;
+      const amt=n(t.amount);
+      if(amt <= 0) return false;
+      if(Math.abs(Math.abs(amt)-target) > 1.00) return false;
+      const tDate=isoDate(t.date);
+      if(tDate > pDate) return false;
+      return /payroll|direct dep|deposit|marine|max|paycheck|salary/i.test(desc(t));
+    });
+  }
+
+  window.paycheckReceived = paycheckActuallyPostedV40;
+  window.paycheckIsReceivedV20 = paycheckActuallyPostedV40;
+  window.receivedPaycheckV21 = paycheckActuallyPostedV40;
+
+  function futurePaycheckEventsV40(){
+    const today=todayIso();
+    return (app.paychecks||[])
+      .map(p=>({raw:p, date:isoDate(p.date), name:p.name || p.description || 'Paycheck', amount:n(p.amount)}))
+      .filter(p=>p.date && p.amount>0 && p.date>=today && !paycheckActuallyPostedV40(p.raw))
+      .map(p=>({date:p.date, name:p.name, amount:p.amount, type:'Income'}));
+  }
+  window.futurePaycheckEventsV40 = futurePaycheckEventsV40;
+
+  const previousVariableReserveEvents = window.variableReserveEventsV39 || function(){ return []; };
+  const previousUnpaidScheduledFuture = window.unpaidScheduledFuture || function(){ return []; };
+
+  window.cashflowRows = function(){
+    const starting = typeof currentCheckingBalance==='function' ? n(currentCheckingBalance()) : n(app.latestSchwabBalance);
+    let bal=starting;
+    const rows=[[todayIso(),'Latest Schwab/current checking balance',0,bal,'Start']];
+    const events=[];
+
+    futurePaycheckEventsV40().forEach(e=>events.push(e));
+    previousUnpaidScheduledFuture().forEach(x=>events.push({date:isoDate(x.date), name:x.name+' ('+x.bucket+')', amount:-n(x.left), type:x.bucket}));
+    previousVariableReserveEvents().forEach(e=>events.push({...e, date:isoDate(e.date)}));
+
+    events
+      .filter(e=>e.date && n(e.amount)!==0)
+      .sort((a,b)=>a.date.localeCompare(b.date) || (b.amount-a.amount))
+      .forEach(e=>{
+        bal += n(e.amount);
+        rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<2500?'Low':'OK']);
+      });
+    return rows;
+  };
+
+  window.renderCashflow = function(){
+    const table=document.getElementById('cashflowTable');
+    if(!table) return;
+    let rows='<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>';
+    cashflowRows().forEach(r=>{
+      const cls=r[4]==='Negative'?'bad':r[4]==='Low'?'warn':'ok';
+      rows+=`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`;
+    });
+    table.innerHTML=rows;
+  };
+
+  try{ renderCashflow(); if(typeof renderDaily==='function') renderDaily(); }catch(e){ console.warn('v40 cashflow rerender failed', e); }
 })();
 </script>
 
