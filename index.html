@@ -3197,804 +3197,450 @@ button.tiny-btn {
 </script>
 
 
-<style>
-/* ===== v38 split-stable final layer ===== */
-.split-box{border:1px solid #d0d5dd;border-radius:8px;padding:8px;margin-top:6px;background:#fff}
-.split-line{display:grid;grid-template-columns:1.35fr 1.25fr 1fr auto;gap:6px;align-items:center;margin:5px 0}
-.split-summary{font-size:12px;color:#475467;margin-top:4px}
-.split-ok{color:#027a48;font-weight:700}.split-warning{color:#b42318;font-weight:700}
-button.tiny-btn{padding:4px 7px;font-size:12px}
-@media(max-width:900px){.split-line{grid-template-columns:1fr}}
-</style>
-
 <script>
-/* ===== v38: stable split transactions, no disappearing rows =====
-   This is intentionally the final layer. It does not remove the old app; it overrides the broken
-   transaction rendering/saving paths so splits are stored in app.transactions immediately.
+/* ===== v42: Probability-Based Cash Flow Forecast =====
+   - Future paychecks stay in the forecast.
+   - Fixed bills/cards/loans stay on their due dates.
+   - Predictable variable spending is recalculated from remaining monthly budget and spread across remaining Fridays.
+   - Decision/optional spending is forecast at a probability factor.
+   - Irregular/event-based spending is not deducted from checking automatically; it is shown as optional risk.
 */
 (function(){
-  const TREATMENTS_V38 = ['Auto','Expense','Reimbursement / Credit','Sinking Fund Contribution','Debt Payment','Debt Payoff Extra','Loan Payment','Ignore / Transfer','Income'];
-  const VARIABLE_V38 = new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']);
-
-  function num(v){ const n=Number(String(v??'').replace(/[$,]/g,'')); return Number.isFinite(n)?n:0; }
-  function abs(v){ return Math.abs(num(v)); }
-  function inMonth(t){ return String(t?.date||'').slice(0,7) === String(app?.month||''); }
-  window.inBudgetMonth = inMonth;
-  window.currentMonthTxV21 = inMonth;
-  function tx(id){ return (app.transactions||[]).find(t=>String(t.id)===String(id)); }
-  function splits(t){ if(!t) return []; if(!Array.isArray(t.splits)) t.splits=[]; return t.splits; }
-  function treatment(t){ return t?.treatment || t?.type || 'Auto'; }
-  function isAppleLike(t){ const s=String((t?.source||'')+' '+(t?.account||'')).toLowerCase(); return s.includes('apple') || (s.includes('card') && !s.includes('schwab')); }
-  function isBudget(cat){ return (app.spendingBudgets||[]).some(b=>b.name===cat); }
-  function isFund(cat){ return (app.sinkingFunds||[]).some(f=>f.name===cat); }
-  function tracked(cat){ return isBudget(cat) || isFund(cat) || VARIABLE_V38.has(String(cat||'')); }
-  function cats(){
-    const base = typeof categories === 'function' ? categories() : [];
-    const accounts = [...(app.creditCards||[]).map(c=>c.name), ...(app.loans||[]).map(l=>l.name)];
-    return [...new Set([...base, ...accounts, 'Debt Payoff'])].filter(Boolean).sort();
-  }
-  function catOptions(selected){ return cats().map(c=>`<option value="${esc(c)}" ${selected===c?'selected':''}>${esc(c)}</option>`).join(''); }
-  function treatmentOptions(selected){ return TREATMENTS_V38.map(o=>`<option value="${esc(o)}" ${selected===o?'selected':''}>${esc(o)}</option>`).join(''); }
-  function spendFrom(t, amount, tr){
-    amount=num(amount);
-    if(['Ignore / Transfer','Income','Sinking Fund Contribution','Debt Payment','Loan Payment'].includes(tr)) return 0;
-    if(tr==='Reimbursement / Credit') return -Math.abs(amount);
-    if(tr==='Expense' || tr==='Debt Payoff Extra') return Math.abs(amount);
-    if(isAppleLike(t)) return amount>0 ? amount : 0;
-    return amount<0 ? Math.abs(amount) : -Math.abs(amount);
-  }
-  window.transactionSpendAmount = function(t){
-    if(!inMonth(t)) return 0;
-    const sp=splits(t);
-    if(sp.length) return sp.reduce((a,s)=>a+(tracked(s.category)?spendFrom(t,s.amount,s.treatment||'Auto'):0),0);
-    if(!tracked(t.category)) return 0;
-    return spendFrom(t,t.amount,treatment(t));
-  };
-  window.txSpendByCategory = function(cat){
-    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
-      const sp=splits(t);
-      if(sp.length) return a + sp.filter(s=>s.category===cat).reduce((x,s)=>x+(tracked(s.category)?spendFrom(t,s.amount,s.treatment||'Auto'):0),0);
-      return a + (t.category===cat ? transactionSpendAmount(t) : 0);
-    },0);
-  };
-  window.debtPayoffExtraFromSplitsV29 = function(){
-    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
-      const sp=splits(t);
-      if(sp.length) return a + sp.filter(s=>s.category==='Debt Payoff' || s.treatment==='Debt Payoff Extra').reduce((x,s)=>x+abs(s.amount),0);
-      return a + (t.category==='Debt Payoff' ? abs(t.amount) : 0);
-    },0);
-  };
-  window.extraDebtPaidThisMonth = window.debtPayoffExtraFromSplitsV29;
-  window.extraDebtPayoffV21 = window.debtPayoffExtraFromSplitsV29;
-
-  function accountPaidFromSplits(accountName, paymentTreatment){
-    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
-      const sp=splits(t);
-      if(sp.length) return a + sp.filter(s=>s.category===accountName && s.treatment===paymentTreatment).reduce((x,s)=>x+abs(s.amount),0);
-      return a;
-    },0);
-  }
-  const oldPaidCardsV36 = window.paidCardsV36;
-  window.paidCardsV36 = function(){
-    const out = oldPaidCardsV36 ? oldPaidCardsV36() : {};
-    (app.creditCards||[]).forEach(c=>{
-      const splitPaid = accountPaidFromSplits(c.name, 'Debt Payment');
-      if(splitPaid>0) out[c.name]=splitPaid;
-    });
-    return out;
-  };
-  const oldPaidLoansV36 = window.paidLoansV36;
-  window.paidLoansV36 = function(){
-    const out = oldPaidLoansV36 ? oldPaidLoansV36() : {};
-    (app.loans||[]).forEach(l=>{
-      const splitPaid = accountPaidFromSplits(l.name, 'Loan Payment');
-      if(splitPaid>0) out[l.name]=splitPaid;
-    });
-    return out;
-  };
-  window.sinkingFundContributionAmount = function(name){
-    if(String(name||'').trim()==='Debt Payoff') return debtPayoffExtraFromSplitsV29();
-    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
-      const sp=splits(t);
-      if(sp.length) return a + sp.filter(s=>s.category===name && s.treatment==='Sinking Fund Contribution').reduce((x,s)=>x+abs(s.amount),0);
-      return a + (t.category===name && treatment(t)==='Sinking Fund Contribution' ? abs(t.amount) : 0);
-    },0);
-  };
-  window.sinkingFundPosition = function(f){
-    if(String(f.name||'').trim()==='Debt Payoff') return debtPayoffExtraFromSplitsV29() - num(f.budget);
-    return num(f.balance)+num(f.saved)+sinkingFundContributionAmount(f.name)-txSpendByCategory(f.name);
-  };
-
-  function splitTotal(t){ return splits(t).reduce((a,s)=>a+abs(s.amount),0); }
-  function splitSummary(t){
-    const total=splitTotal(t), target=abs(t.amount), diff=target-total;
-    const cls=Math.abs(diff)<0.01?'split-ok':'split-warning';
-    return `<div class="split-summary ${cls}">Split total ${money(total)} of ${money(target)}${Math.abs(diff)<0.01?' ✓':' — difference '+money(diff)}</div>`;
-  }
-  function splitEditor(t){
-    const sp=splits(t);
-    if(!sp.length){
-      const isApplePayment = String((t.description||'')+' '+(t.rawDescription||'')).toUpperCase().includes('APPLECARD');
-      return `<div class="split-summary"><button type="button" class="tiny-btn" data-add-split="${esc(t.id)}">Split</button> ${isApplePayment?`<button type="button" class="tiny-btn" data-auto-apple="${esc(t.id)}">Auto-split Apple payment</button>`:''}</div>`;
-    }
-    return `<div class="split-box" data-split-box="${esc(t.id)}"><b>Splits</b>${
-      sp.map((s,i)=>`<div class="split-line">
-        <select data-split-cat="${esc(t.id)}" data-split-idx="${i}">${catOptions(s.category)}</select>
-        <select data-split-treatment="${esc(t.id)}" data-split-idx="${i}">${treatmentOptions(s.treatment||'Auto')}</select>
-        <input type="number" step="0.01" data-split-amount="${esc(t.id)}" data-split-idx="${i}" value="${num(s.amount)}">
-        <button type="button" class="tiny-btn" data-remove-split="${esc(t.id)}" data-split-idx="${i}">Remove</button>
-      </div>`).join('')
-    }${splitSummary(t)}
-      <button type="button" class="tiny-btn" data-add-split="${esc(t.id)}">Add line</button>
-      <button type="button" class="tiny-btn" data-clear-splits="${esc(t.id)}">Clear splits</button>
-    </div>`;
-  }
-  function captureSplitEl(el){
-    const id = el.dataset.splitCat || el.dataset.splitTreatment || el.dataset.splitAmount || '';
-    if(!id) return;
-    const t=tx(id); if(!t) return;
-    const idx=Number(el.dataset.splitIdx||0);
-    const sp=splits(t);
-    while(sp.length<=idx) sp.push({category:t.category||'Needs Review', treatment:'Expense', amount:0});
-    if(el.dataset.splitCat!==undefined) sp[idx].category = el.value;
-    if(el.dataset.splitTreatment!==undefined) sp[idx].treatment = el.value;
-    if(el.dataset.splitAmount!==undefined) sp[idx].amount = num(el.value);
-  }
-  function captureVisibleSplits(){ document.querySelectorAll('[data-split-cat],[data-split-treatment],[data-split-amount]').forEach(captureSplitEl); }
-  function captureVisibleTransactionEditsV38(){
-    captureVisibleSplits();
-    document.querySelectorAll('[data-cat]').forEach(sel=>{ const t=tx(sel.dataset.cat); if(t) t.category=sel.value; });
-    document.querySelectorAll('[data-owner]').forEach(sel=>{ const t=tx(sel.dataset.owner); if(t) t.owner=sel.value==='Shared/Unknown'?'':sel.value; });
-    document.querySelectorAll('[data-treatment]').forEach(sel=>{ const t=tx(sel.dataset.treatment); if(t) t.treatment=sel.value; });
-  }
-  window.captureVisibleTransactionEdits = captureVisibleTransactionEditsV38;
-  function refreshSummaries(){
-    try{ renderDaily(); }catch(e){ console.warn('v38 renderDaily failed', e); }
-    try{ renderCashflow(); }catch(e){}
-    try{ renderBudgets(); }catch(e){}
-    try{ renderDebts(); }catch(e){}
-  }
-  function updateSplitSummaryOnly(t){
-    const box=document.querySelector(`[data-split-box="${CSS.escape(String(t.id))}"]`);
-    if(!box) return;
-    const old=box.querySelector('.split-summary');
-    if(old) old.outerHTML=splitSummary(t);
-    const row=box.closest('tr');
-    if(row){
-      const cells=row.querySelectorAll('td');
-      if(cells.length) cells[cells.length-1].textContent = money(transactionSpendAmount(t));
-    }
-  }
-
-  window.renderTransactions = function(){
-    captureVisibleSplits();
-    const ownerFilter=document.getElementById('filterOwner')?.value || '';
-    const catFilter=document.getElementById('filterCategory')?.value || '';
-    const q=(document.getElementById('searchTx')?.value || '').toLowerCase();
-    const showAll = window.txShowAllMonthsV21 || false;
-    const pageSize = window.txPageSizeV21 || 50;
-    window.txPageV21 = window.txPageV21 || 1;
-
-    let list=(app.transactions||[]).filter(t=>{
-      if(!showAll && !inMonth(t)) return false;
-      const owner=t.owner||'Shared/Unknown';
-      const text=String((t.description||'')+' '+(t.rawDescription||'')+' '+(t.category||'')).toLowerCase();
-      const splitMatch=splits(t).some(s=>s.category===catFilter);
-      return (!ownerFilter||owner===ownerFilter) && (!catFilter||t.category===catFilter||splitMatch) && (!q||text.includes(q));
-    }).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')) || String(b.posted||'').localeCompare(String(a.posted||'')));
-
-    const total=list.length, pages=Math.max(1, Math.ceil(total/pageSize));
-    if(window.txPageV21>pages) window.txPageV21=pages;
-    const page=list.slice((window.txPageV21-1)*pageSize, window.txPageV21*pageSize);
-
-    let controls=`<div class="toolbar"><button type="button" id="txPrevV38">Prev</button><span class="small">Page ${window.txPageV21} of ${pages} (${total} rows)</span><button type="button" id="txNextV38">Next</button><label class="small"><input type="checkbox" id="txAllMonthsV38" ${showAll?'checked':''} style="width:auto"> Show all months</label><select id="txPageSizeV38"><option ${pageSize===25?'selected':''}>25</option><option ${pageSize===50?'selected':''}>50</option><option ${pageSize===100?'selected':''}>100</option></select></div>`;
-    let rows='<tr><th>Date</th><th>Source</th><th>Owner</th><th>Description</th><th>Category</th><th>Treatment</th><th class="num">Amount</th><th class="num">Budget Impact</th></tr>';
-    page.forEach(t=>{
-      const ownerSel=`<select data-owner="${esc(t.id)}"><option ${!t.owner?'selected':''}>Shared/Unknown</option><option ${t.owner==='Joe'?'selected':''}>Joe</option><option ${t.owner==='Katy'?'selected':''}>Katy</option></select>`;
-      const catSel=`<select data-cat="${esc(t.id)}">${catOptions(t.category)}</select>`;
-      const trSel=`<select data-treatment="${esc(t.id)}">${treatmentOptions(treatment(t))}</select>`;
-      const impact=transactionSpendAmount(t);
-      rows+=`<tr><td>${esc(t.date)}</td><td>${esc(t.source)}</td><td>${ownerSel}</td><td><b>${esc(t.description)}</b><div class="tiny">${esc(t.purchasedBy||'')}</div>${splitEditor(t)}</td><td>${catSel}</td><td>${trSel}</td><td class="num">${money(t.amount)}</td><td class="num ${impact<0?'ok':impact>0?'':'tiny'}">${money(impact)}</td></tr>`;
-    });
-    document.getElementById('txTable').innerHTML = controls + rows;
-    document.getElementById('txPrevV38')?.addEventListener('click',()=>{window.txPageV21=Math.max(1,window.txPageV21-1); renderTransactions();});
-    document.getElementById('txNextV38')?.addEventListener('click',()=>{window.txPageV21=Math.min(pages,window.txPageV21+1); renderTransactions();});
-    document.getElementById('txAllMonthsV38')?.addEventListener('change',e=>{window.txShowAllMonthsV21=e.target.checked; window.txPageV21=1; renderTransactions();});
-    document.getElementById('txPageSizeV38')?.addEventListener('change',e=>{window.txPageSizeV21=Number(e.target.value)||50; window.txPageV21=1; renderTransactions();});
-  };
-
-  window.saveTransactionEdits = function(){
-    captureVisibleTransactionEditsV38();
-    refreshSummaries();
-    const btn=document.getElementById('saveChanges');
-    if(btn){ const old=btn.textContent; btn.textContent='Saved ✓'; btn.classList.add('saved'); setTimeout(()=>{btn.textContent=old||'Save Changes';btn.classList.remove('saved');},1400); }
-    if(typeof queueAutoSync==='function') queueAutoSync('transaction edits with splits');
-  };
-
-  const oldQueue = window.queueAutoSync;
-  window.queueAutoSync = function(reason='change'){
-    captureVisibleTransactionEditsV38();
-    if(typeof oldQueue==='function') return oldQueue(reason);
-  };
-  window.pushTransactionsToSheet = async function(){
-    try{
-      captureVisibleTransactionEditsV38();
-      if(typeof setSyncStatus==='function') setSyncStatus('Saving transactions, including splits, to Google Sheets...', 'warn');
-      const json = await callSheetApi({action:'saveAll', app});
-      if(typeof setSyncStatus==='function') setSyncStatus('Saved ' + (json.count ?? (app.transactions||[]).length) + ' transaction(s), including splits, at ' + new Date().toLocaleTimeString(), 'ok');
-      if(typeof loadFromSheet==='function') await loadFromSheet();
-    }catch(err){
-      console.error(err);
-      if(typeof setSyncStatus==='function') setSyncStatus('Save failed: ' + err.message, 'bad');
-      alert('Save failed: ' + err.message);
-    }
-  };
-
-  document.addEventListener('input', e=>{
-    const el=e.target;
-    if(el?.dataset?.splitAmount!==undefined){
-      captureSplitEl(el);
-      const t=tx(el.dataset.splitAmount);
-      if(t) updateSplitSummaryOnly(t);
-      e.stopImmediatePropagation();
-    }
-  }, true);
-  document.addEventListener('change', e=>{
-    const el=e.target;
-    if(!el?.dataset) return;
-    if(el.dataset.splitCat!==undefined || el.dataset.splitTreatment!==undefined || el.dataset.splitAmount!==undefined){
-      captureSplitEl(el);
-      const id=el.dataset.splitCat||el.dataset.splitTreatment||el.dataset.splitAmount;
-      const t=tx(id);
-      if(t) updateSplitSummaryOnly(t);
-      refreshSummaries();
-      if(typeof queueAutoSync==='function') queueAutoSync('split update');
-      e.stopImmediatePropagation();
-      return;
-    }
-    if(el.dataset.cat!==undefined || el.dataset.owner!==undefined || el.dataset.treatment!==undefined){
-      captureVisibleSplits();
-    }
-  }, true);
-  document.addEventListener('click', e=>{
-    const add=e.target.closest('[data-add-split]');
-    const auto=e.target.closest('[data-auto-apple]');
-    const rem=e.target.closest('[data-remove-split]');
-    const clear=e.target.closest('[data-clear-splits]');
-    if(add){
-      captureVisibleTransactionEditsV38();
-      const t=tx(add.dataset.addSplit); if(t){ splits(t).push({category:t.category||'Needs Review', treatment:'Expense', amount:0}); renderTransactions(); }
-      e.preventDefault(); e.stopImmediatePropagation(); return;
-    }
-    if(auto){
-      captureVisibleTransactionEditsV38();
-      const t=tx(auto.dataset.autoApple);
-      if(t){
-        const amt=abs(t.amount);
-        const apple=(app.creditCards||[]).find(c=>String(c.name).toLowerCase().includes('apple card')&&String(c.name).toLowerCase().includes('joe'));
-        const min=apple?num(apple.min):0;
-        t.splits=[{category:apple?apple.name:'Apple Card - Joe', treatment:'Debt Payment', amount:Math.min(amt,min)}, {category:'Debt Payoff', treatment:'Debt Payoff Extra', amount:Math.max(0, amt-min)}].filter(s=>num(s.amount)>0);
-        t.category='Debt Payment'; t.treatment='Debt Payment';
-        renderTransactions(); refreshSummaries(); if(typeof queueAutoSync==='function') queueAutoSync('auto-split Apple payment');
-      }
-      e.preventDefault(); e.stopImmediatePropagation(); return;
-    }
-    if(rem){
-      captureVisibleTransactionEditsV38();
-      const t=tx(rem.dataset.removeSplit);
-      if(t){ splits(t).splice(Number(rem.dataset.splitIdx||0),1); renderTransactions(); refreshSummaries(); if(typeof queueAutoSync==='function') queueAutoSync('remove split'); }
-      e.preventDefault(); e.stopImmediatePropagation(); return;
-    }
-    if(clear){
-      const t=tx(clear.dataset.clearSplits);
-      if(t && confirm('Clear splits for this transaction?')){ t.splits=[]; renderTransactions(); refreshSummaries(); if(typeof queueAutoSync==='function') queueAutoSync('clear splits'); }
-      e.preventDefault(); e.stopImmediatePropagation(); return;
-    }
-  }, true);
-
-  setTimeout(()=>{
-    (app.transactions||[]).forEach(t=>{ if(!Array.isArray(t.splits)) t.splits=[]; });
-    document.getElementById('saveChanges')?.addEventListener('click', e=>{ e.preventDefault(); saveTransactionEdits(); }, true);
-    document.getElementById('pushSheet')?.addEventListener('click', e=>{ e.preventDefault(); e.stopImmediatePropagation(); pushTransactionsToSheet(); }, true);
-    try{ renderTransactions(); refreshSummaries(); }catch(e){ console.warn('v38 initial render failed', e); }
-  },0);
-})();
-</script>
-
-
-
-<script>
-/* ===== v39: cash-flow forecast fix =====
-   - Future paychecks now appear unless an actual Schwab payroll/deposit for that exact paycheck date/amount already posted.
-   - Variable monthly spending categories are NOT treated like one giant bill.
-   - Groceries, health/personal care, gas/auto, services, dog food, etc. are spread across remaining Fridays in the month.
-   - Fixed bills, cards, and loans remain scheduled on their due dates.
-*/
-(function(){
-  const VARIABLE_CASHFLOW_V39 = new Set([
+  const V42_FULL_RESERVE_CATEGORIES = new Set([
     'Groceries',
     'Dog Food',
     'Auto Fuel & Maintenance',
     'Basic Health & Personal Care',
-    'House Cleaning',
-    'Services',
     'Household Consumables',
     'Household Miscellaneous',
     'Kids Miscellaneous',
-    'Kids Experiences',
     'Date Nights',
     'Alcohol & Entertainment'
   ]);
 
-  function n(v){ const x=Number(String(v??'').replace(/[$,]/g,'')); return Number.isFinite(x)?x:0; }
-  function iso(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-  function parseIso(s){ const [y,m,d]=String(s||'').split('-').map(Number); return new Date(y||2026,(m||1)-1,d||1); }
-  function month(){ return String(app?.month || '').trim(); }
-  function startToday(){ return String(typeof today==='function' ? today() : app.today || new Date().toISOString().slice(0,10)); }
-  function monthEndDate(){ const [y,m]=month().split('-').map(Number); return new Date(y, m, 0); }
-  function inMonthV39(t){ return String(t?.date||'').slice(0,7) === month(); }
-  function isSchwab(t){ return String((t?.source||'')+' '+(t?.account||'')).toLowerCase().includes('schwab'); }
-  function desc(t){ return String((t?.description||'')+' '+(t?.rawDescription||'')).toLowerCase(); }
-  function isVariableName(name){ return VARIABLE_CASHFLOW_V39.has(String(name||'')); }
-
-  function strictPaycheckReceivedV39(p){
-    if(!p) return false;
-    const pDate=String(p.date||'');
-    const todayStr=startToday();
-    // Future paychecks are never considered received, even if a stale TRUE flag came from the Sheet.
-    if(pDate > todayStr) return false;
-    if(p.received === true || String(p.received).toLowerCase()==='true') return true;
-    const target=Math.abs(n(p.amount));
-    if(!target) return false;
-    return (app.transactions||[]).some(t=>{
-      if(!inMonthV39(t) || !isSchwab(t)) return false;
-      const amt=n(t.amount);
-      if(amt <= 0) return false;
-      if(Math.abs(Math.abs(amt)-target) > 1.00) return false;
-      const d=String(t.date||'');
-      const looksLikePay = /payroll|direct dep|deposit|marine|max|paycheck/i.test(desc(t));
-      // Only match deposits posted on/before that paycheck date, not random future/stale deposits.
-      return d <= pDate && looksLikePay;
-    });
-  }
-  window.paycheckReceived = strictPaycheckReceivedV39;
-  window.paycheckIsReceivedV20 = strictPaycheckReceivedV39;
-  window.receivedPaycheckV21 = strictPaycheckReceivedV39;
-
-  function fixedScheduledItemsV39(){
-    const bills=(app.bills||[])
-      .filter(b=>!isVariableName(b.name))
-      .map(b=>({kind:'bill',name:b.name,amount:n(b.amount),due:n(b.due)||1,bucket:'Bills'}));
-    const cards=(app.creditCards||[]).map(c=>({kind:'card',name:c.name,amount:n(c.min),due:n(c.due)||1,bucket:'Credit Cards'}));
-    const loans=(app.loans||[]).map(l=>({kind:'loan',name:l.name,amount:n(l.min),due:n(l.due)||1,bucket:'Loans'}));
-    return [...bills,...cards,...loans].filter(x=>n(x.amount)>0);
-  }
-
-  window.scheduledItems = fixedScheduledItemsV39;
-
-  function paidForV39(x){
-    if(x.kind==='bill'){
-      if(typeof paidBillsV36==='function') return n(paidBillsV36()[x.name]);
-      return n((app.paidBills||{})[x.name]);
-    }
-    if(x.kind==='card'){
-      if(typeof paidCardsV36==='function') return n(paidCardsV36()[x.name]);
-      return n((app.paidCards||{})[x.name]);
-    }
-    if(x.kind==='loan'){
-      if(typeof paidLoansV36==='function') return n(paidLoansV36()[x.name]);
-      return n((app.paidLoans||{})[x.name]);
-    }
-    return 0;
-  }
-  window.paidForScheduled = paidForV39;
-
-  function dateFromDayV39(day){ return month() + '-' + String(day||1).padStart(2,'0'); }
-  window.unpaidScheduledFuture = function(){
-    const todayStr=startToday();
-    return fixedScheduledItemsV39()
-      .map(x=>({...x, paid:paidForV39(x), left:Math.max(0,n(x.amount)-paidForV39(x)), date:dateFromDayV39(x.due)}))
-      .filter(x=>x.left>0.009 && x.date>=todayStr)
-      .sort((a,b)=>a.date.localeCompare(b.date));
+  const V42_PARTIAL_RESERVE_PROBABILITY = {
+    'Joe - Individual Priorities': 0.60,
+    'Katy - Individual Priorities': 0.60,
+    'Kids Experiences': 0.60
   };
 
-  function variableBudgetRowsV39(){
-    const rows=[];
-    (app.spendingBudgets||[]).forEach(b=>{
-      if(isVariableName(b.name)) rows.push({name:b.name, budget:n(b.budget), source:'Budget'});
-    });
-    // Some older Sheet versions still keep these in Bills. Include them only if not already in spendingBudgets.
-    (app.bills||[]).forEach(b=>{
-      if(isVariableName(b.name) && !rows.some(r=>r.name===b.name)) rows.push({name:b.name, budget:n(b.amount), source:'Bills'});
-    });
-    return rows.filter(r=>r.budget>0);
-  }
+  const V42_FIXED_BILL_EXCLUSIONS = new Set([
+    'Groceries',
+    'Dog Food',
+    'Auto Fuel & Maintenance',
+    'Basic Health & Personal Care',
+    'Household Consumables',
+    'Household Miscellaneous',
+    'Kids Miscellaneous',
+    'Date Nights',
+    'Alcohol & Entertainment',
+    'Joe - Individual Priorities',
+    'Katy - Individual Priorities',
+    'Kids Experiences',
+    'House Cleaning',
+    'Services'
+  ]);
 
-  function remainingVariableBudgetV39(name,budget){
-    const spent = typeof txSpendByCategory==='function' ? n(txSpendByCategory(name)) : 0;
-    return Math.max(0, n(budget)-spent);
+  function n(v){
+    const x = Number(String(v ?? '').replace(/[$,]/g,''));
+    return Number.isFinite(x) ? x : 0;
   }
-
-  function remainingFridaysV39(){
-    const todayStr=startToday();
-    let d=parseIso(todayStr);
-    const end=monthEndDate();
-    const dates=[];
-    while(d<=end){
-      if(d.getDay()===5) dates.push(iso(d)); // Friday
-      d.setDate(d.getDate()+1);
+  function pad(v){ return String(v).padStart(2,'0'); }
+  function iso(v){
+    if(v === undefined || v === null || v === '') return '';
+    if(typeof v === 'number' && Number.isFinite(v) && v > 30000){
+      const d = new Date(Date.UTC(1899,11,30) + v * 86400000);
+      return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
     }
-    if(!dates.length){
-      // End-of-month fallback if no Fridays are left.
-      dates.push(iso(end));
-    }
-    return dates;
-  }
-
-  function variableReserveEventsV39(){
-    const dates=remainingFridaysV39();
-    const events=[];
-    variableBudgetRowsV39().forEach(row=>{
-      const remaining=remainingVariableBudgetV39(row.name,row.budget);
-      if(remaining<=0.009) return;
-      const each=Math.round((remaining/dates.length)*100)/100;
-      dates.forEach((date,i)=>{
-        const amount = i===dates.length-1 ? Math.round((remaining - each*(dates.length-1))*100)/100 : each;
-        if(amount>0.009) events.push({date,name:`${row.name} weekly reserve`,amount:-amount,type:'Variable Spending'});
-      });
-    });
-    return events;
-  }
-  window.variableReserveEventsV39 = variableReserveEventsV39;
-
-  function futurePaycheckEventsV39(){
-    const todayStr=startToday();
-    return (app.paychecks||[])
-      .filter(p=>String(p.date||'')>=todayStr && !strictPaycheckReceivedV39(p))
-      .map(p=>({date:p.date,name:p.name,amount:n(p.amount),type:'Income'}));
-  }
-
-  window.cashflowRows = function(){
-    const starting = typeof currentCheckingBalance==='function' ? n(currentCheckingBalance()) : n(app.latestSchwabBalance);
-    let bal=starting;
-    const rows=[[startToday(),'Latest Schwab/current checking balance',0,bal,'Start']];
-    const events=[];
-    futurePaycheckEventsV39().forEach(e=>events.push(e));
-    unpaidScheduledFuture().forEach(x=>events.push({date:x.date,name:x.name+' ('+x.bucket+')',amount:-n(x.left),type:x.bucket}));
-    variableReserveEventsV39().forEach(e=>events.push(e));
-    events.sort((a,b)=>a.date.localeCompare(b.date) || (b.amount-a.amount));
-    events.forEach(e=>{
-      bal += n(e.amount);
-      rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<2500?'Low':'OK']);
-    });
-    return rows;
-  };
-
-  window.renderCashflow = function(){
-    const table=document.getElementById('cashflowTable');
-    if(!table) return;
-    let rows='<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>';
-    cashflowRows().forEach(r=>{
-      const cls=r[4]==='Negative'?'bad':r[4]==='Low'?'warn':'ok';
-      rows+=`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`;
-    });
-    table.innerHTML=rows;
-  };
-
-  // Keep Upcoming Scheduled Money Out fixed-bill only; variable reserves live in Cash Flow.
-  const prevRenderDailyV39 = window.renderDaily;
-  window.renderDaily = function(){
-    if(typeof prevRenderDailyV39==='function') prevRenderDailyV39();
-    try{
-      const upcoming=unpaidScheduledFuture().slice(0,12);
-      const table=document.getElementById('upcomingTable');
-      if(table){
-        table.innerHTML='<tr><th>Date</th><th>Item</th><th>Bucket</th><th class="num">Left</th></tr>'+
-          upcoming.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.name)}</td><td>${esc(x.bucket)}</td><td class="num">${money(x.left)}</td></tr>`).join('');
-      }
-    }catch(e){ console.warn('v39 upcoming refresh failed', e); }
-  };
-
-  try{ renderCashflow(); renderDaily(); }catch(e){ console.warn('v39 cashflow initial render failed', e); }
-})();
-</script>
-
-
-<script>
-/* ===== v40: robust paycheck/income events in Cash Flow =====
-   v39 spread variable budgets correctly, but it compared paycheck dates as raw strings.
-   If the Sheet sends dates like 6/12/2026 or ISO timestamps, those comparisons can fail.
-   This override normalizes paycheck dates before deciding whether income is future/received.
-*/
-(function(){
-  function n(v){ const x=Number(String(v??'').replace(/[$,]/g,'')); return Number.isFinite(x)?x:0; }
-  function pad(x){ return String(x).padStart(2,'0'); }
-  function isoDate(v){
-    if(v===undefined || v===null || v==='') return '';
     if(v instanceof Date && !isNaN(v)) return `${v.getFullYear()}-${pad(v.getMonth()+1)}-${pad(v.getDate())}`;
-    const s=String(v).trim();
-    let m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    const s = String(v).trim();
+    let m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
     if(m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
-    m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})/);
     if(m){
-      let y=Number(m[3]); if(y<100) y+=2000;
+      let y = Number(m[3]); if(y < 100) y += 2000;
       return `${y}-${pad(m[1])}-${pad(m[2])}`;
     }
-    const d=new Date(s);
+    const d = new Date(s);
     if(!isNaN(d)) return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
     return s;
   }
-  function todayIso(){ return isoDate(typeof today==='function' ? today() : app.today || new Date()); }
-  function month(){ return String(app?.month || todayIso().slice(0,7)); }
-  function inMonth(t){ return isoDate(t?.date).slice(0,7)===month(); }
-  function desc(t){ return String((t?.description||'')+' '+(t?.rawDescription||'')).toLowerCase(); }
-  function isSchwab(t){ return String((t?.source||'')+' '+(t?.account||'')).toLowerCase().includes('schwab'); }
-
-  function paycheckActuallyPostedV40(p){
-    const pDate=isoDate(p?.date);
-    const today=todayIso();
-    // Future paychecks must appear in the forecast, even if the Sheet has a stale TRUE flag.
-    if(pDate > today) return false;
-
-    const target=Math.abs(n(p?.amount));
-    if(!target) return false;
-
-    // For past/today paychecks: trust either the explicit received flag or a matching payroll deposit.
-    if(p?.received===true || String(p?.received).toLowerCase()==='true') return true;
-
-    return (app.transactions||[]).some(t=>{
-      if(!inMonth(t) || !isSchwab(t)) return false;
-      const amt=n(t.amount);
-      if(amt <= 0) return false;
-      if(Math.abs(Math.abs(amt)-target) > 1.00) return false;
-      const tDate=isoDate(t.date);
-      if(tDate > pDate) return false;
-      return /payroll|direct dep|deposit|marine|max|paycheck|salary/i.test(desc(t));
-    });
+  function currentToday(){
+    return iso(typeof today === 'function' ? today() : (app && app.today) || new Date());
+  }
+  function currentMonth(){
+    return String((app && app.month) || currentToday().slice(0,7));
+  }
+  function currentMonthTx(t){
+    return iso(t && t.date).slice(0,7) === currentMonth();
+  }
+  function isSchwab(t){
+    return String(((t && t.source) || '') + ' ' + ((t && t.account) || '')).toLowerCase().includes('schwab');
+  }
+  function txText(t){
+    return String(((t && t.description) || '') + ' ' + ((t && t.rawDescription) || '')).toLowerCase();
+  }
+  function safeMoney(v){
+    return typeof money === 'function' ? money(v) : (Number(v)||0).toLocaleString('en-US',{style:'currency',currency:'USD'});
+  }
+  function safeEsc(v){
+    return typeof esc === 'function' ? esc(v) : String(v ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   }
 
-  window.paycheckReceived = paycheckActuallyPostedV40;
-  window.paycheckIsReceivedV20 = paycheckActuallyPostedV40;
-  window.receivedPaycheckV21 = paycheckActuallyPostedV40;
-
-  function futurePaycheckEventsV40(){
-    const today=todayIso();
-    return (app.paychecks||[])
-      .map(p=>({raw:p, date:isoDate(p.date), name:p.name || p.description || 'Paycheck', amount:n(p.amount)}))
-      .filter(p=>p.date && p.amount>0 && p.date>=today && !paycheckActuallyPostedV40(p.raw))
-      .map(p=>({date:p.date, name:p.name, amount:p.amount, type:'Income'}));
+  function txOrderKey(t){
+    const idx = (app.transactions || []).indexOf(t);
+    return `${iso(t.date)}|${iso(t.posted || t.date)}|${String(idx).padStart(8,'0')}`;
   }
-  window.futurePaycheckEventsV40 = futurePaycheckEventsV40;
 
-  const previousVariableReserveEvents = window.variableReserveEventsV39 || function(){ return []; };
-  const previousUnpaidScheduledFuture = window.unpaidScheduledFuture || function(){ return []; };
+  function latestSchwabRunningBalanceTxV42(){
+    return (app.transactions || [])
+      .filter(t => currentMonthTx(t) && isSchwab(t) && t.runningBalance !== undefined && t.runningBalance !== null && t.runningBalance !== '' && !Number.isNaN(Number(t.runningBalance)))
+      .sort((a,b) => txOrderKey(b).localeCompare(txOrderKey(a)))[0] || null;
+  }
 
-  window.cashflowRows = function(){
-    const starting = typeof currentCheckingBalance==='function' ? n(currentCheckingBalance()) : n(app.latestSchwabBalance);
-    let bal=starting;
-    const rows=[[todayIso(),'Latest Schwab/current checking balance',0,bal,'Start']];
-    const events=[];
-
-    futurePaycheckEventsV40().forEach(e=>events.push(e));
-    previousUnpaidScheduledFuture().forEach(x=>events.push({date:isoDate(x.date), name:x.name+' ('+x.bucket+')', amount:-n(x.left), type:x.bucket}));
-    previousVariableReserveEvents().forEach(e=>events.push({...e, date:isoDate(e.date)}));
-
-    events
-      .filter(e=>e.date && n(e.amount)!==0)
-      .sort((a,b)=>a.date.localeCompare(b.date) || (b.amount-a.amount))
-      .forEach(e=>{
-        bal += n(e.amount);
-        rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<2500?'Low':'OK']);
-      });
-    return rows;
-  };
-
-  window.renderCashflow = function(){
-    const table=document.getElementById('cashflowTable');
-    if(!table) return;
-    let rows='<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>';
-    cashflowRows().forEach(r=>{
-      const cls=r[4]==='Negative'?'bad':r[4]==='Low'?'warn':'ok';
-      rows+=`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`;
-    });
-    table.innerHTML=rows;
-  };
-
-  try{ renderCashflow(); if(typeof renderDaily==='function') renderDaily(); }catch(e){ console.warn('v40 cashflow rerender failed', e); }
-})();
-</script>
-
-
-<script>
-/* ===== v41: final cashflow income + no-stale-initial-render fix =====
-   Problems fixed:
-   1) Future paychecks disappeared after Sheet load when app.paychecks came back empty/bad.
-      We now use the Sheet paychecks when valid, otherwise fall back to the original embedded paycheck schedule.
-   2) The page showed stale embedded data for a few seconds before the Sheet loaded.
-      With an API URL present, Daily/Cashflow show loading placeholders until the Sheet load finishes.
-*/
-(function(){
-  const ORIGINAL_APP_V41 = (()=>{
-    try { return JSON.parse(document.getElementById('initialData')?.textContent || '{}'); }
-    catch(e){ return {}; }
-  })();
-  let sheetReadyV41 = false;
-  let loadStartedV41 = false;
-
-  function n(v){ const x=Number(String(v??'').replace(/[$,]/g,'')); return Number.isFinite(x)?x:0; }
-  function pad(x){ return String(x).padStart(2,'0'); }
-  function isoDate(v){
-    if(v===undefined || v===null || v==='') return '';
-    if(typeof v === 'number' && Number.isFinite(v)){
-      // Google/Excel serial date. 1899-12-30 is the Sheets epoch for serial dates.
-      if(v > 30000){ const d=new Date(Date.UTC(1899,11,30) + v*86400000); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`; }
+  function currentCheckingV42(){
+    const latest = latestSchwabRunningBalanceTxV42();
+    if(latest){
+      const latestKey = txOrderKey(latest);
+      let bal = n(latest.runningBalance);
+      // If a newer Schwab transaction lacks a running balance, apply it on top.
+      (app.transactions || [])
+        .filter(t => currentMonthTx(t) && isSchwab(t) && txOrderKey(t) > latestKey && (t.runningBalance === undefined || t.runningBalance === null || t.runningBalance === ''))
+        .sort((a,b)=>txOrderKey(a).localeCompare(txOrderKey(b)))
+        .forEach(t => { bal += n(t.amount); });
+      app.latestSchwabBalance = bal;
+      return bal;
     }
-    if(v instanceof Date && !isNaN(v)) return `${v.getFullYear()}-${pad(v.getMonth()+1)}-${pad(v.getDate())}`;
-    const s=String(v).trim();
-    let m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-    if(m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
-    m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s.*)?$/);
-    if(m){ let y=Number(m[3]); if(y<100)y+=2000; return `${y}-${pad(m[1])}-${pad(m[2])}`; }
-    const d=new Date(s);
-    if(!isNaN(d)) return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-    return s;
+    if(typeof currentCheckingBalanceV21 === 'function') return n(currentCheckingBalanceV21());
+    if(typeof currentCheckingBalance === 'function') return n(currentCheckingBalance());
+    return n(app.latestSchwabBalance);
   }
-  function todayIso(){ return isoDate(typeof today==='function' ? today() : app?.today || new Date()); }
-  function month(){ return String(app?.month || todayIso().slice(0,7)); }
-  function inMonth(t){ return isoDate(t?.date).slice(0,7)===month(); }
-  function desc(t){ return String((t?.description||'')+' '+(t?.rawDescription||'')).toLowerCase(); }
-  function isSchwab(t){ return String((t?.source||'')+' '+(t?.account||'')).toLowerCase().includes('schwab'); }
-  function hasApi(){ try { return !!(typeof getApiUrl==='function' ? getApiUrl() : (document.getElementById('apiUrl')?.value || '')); } catch(e){ return false; } }
 
-  function normalizedPaychecksV41(){
-    const sheetPaychecks = Array.isArray(app?.paychecks) ? app.paychecks : [];
-    const originalPaychecks = Array.isArray(ORIGINAL_APP_V41.paychecks) ? ORIGINAL_APP_V41.paychecks : [];
+  function originalPaychecksV42(){
+    try {
+      const raw = JSON.parse(document.getElementById('initialData')?.textContent || '{}');
+      return Array.isArray(raw.paychecks) ? raw.paychecks : [];
+    } catch(e) {
+      return [];
+    }
+  }
 
-    // Use Sheet paychecks only if they contain usable future/current-month paycheck rows.
-    const cleanedSheet = sheetPaychecks.map(p=>({
-      raw:p,
-      date:isoDate(p.date || p.payDate || p.paymentDate),
-      name:p.name || p.description || p.person || 'Paycheck',
-      amount:n(p.amount || p.Amount)
-    })).filter(p=>p.date && p.amount>0 && p.date.slice(0,7)===month());
-
-    const cleanedOriginal = originalPaychecks.map(p=>({
-      raw:p,
-      date:isoDate(p.date),
-      name:p.name || p.description || 'Paycheck',
-      amount:n(p.amount)
-    })).filter(p=>p.date && p.amount>0 && p.date.slice(0,7)===month());
-
-    const source = cleanedSheet.length ? cleanedSheet : cleanedOriginal;
-    // De-dupe by date+amount+name-ish.
-    const seen=new Set();
-    return source.filter(p=>{
-      const key=`${p.date}|${Math.round(p.amount*100)}|${String(p.name).toLowerCase()}`;
+  function paycheckListV42(){
+    const sheet = Array.isArray(app.paychecks) ? app.paychecks : [];
+    const embedded = originalPaychecksV42();
+    const normalize = p => ({
+      raw: p,
+      date: iso(p.date || p.payDate || p.paymentDate),
+      name: p.name || p.description || p.person || 'Paycheck',
+      amount: n(p.amount || p.Amount)
+    });
+    const sheetClean = sheet.map(normalize).filter(p => p.date && p.date.slice(0,7) === currentMonth() && p.amount > 0);
+    const embedClean = embedded.map(normalize).filter(p => p.date && p.date.slice(0,7) === currentMonth() && p.amount > 0);
+    const source = sheetClean.length ? sheetClean : embedClean;
+    const seen = new Set();
+    return source.filter(p => {
+      const key = `${p.date}|${Math.round(p.amount * 100)}|${String(p.name).toLowerCase()}`;
       if(seen.has(key)) return false;
       seen.add(key);
       return true;
     });
   }
 
-  function paycheckActuallyPostedV41(p){
-    const pDate=isoDate(p.date || p.raw?.date);
-    const today=todayIso();
-    if(!pDate) return false;
-    // Future paychecks must always appear.
-    if(pDate > today) return false;
-    const target=Math.abs(n(p.amount || p.raw?.amount));
-    if(!target) return false;
-    if(p.raw?.received===true || String(p.raw?.received).toLowerCase()==='true') return true;
-    return (app.transactions||[]).some(t=>{
-      if(!inMonth(t) || !isSchwab(t)) return false;
-      const amt=n(t.amount);
+  function paycheckPostedV42(p){
+    const pDate = iso(p.date || p.raw?.date);
+    const today = currentToday();
+    if(!pDate || pDate > today) return false;
+    const target = Math.abs(n(p.amount || p.raw?.amount));
+    if(p.raw && (p.raw.received === true || String(p.raw.received).toLowerCase() === 'true')) return true;
+    return (app.transactions || []).some(t => {
+      if(!currentMonthTx(t) || !isSchwab(t)) return false;
+      const amt = n(t.amount);
       if(amt <= 0) return false;
-      if(Math.abs(Math.abs(amt)-target) > 1.00) return false;
-      const tDate=isoDate(t.date);
-      if(tDate > pDate) return false;
-      return /payroll|direct dep|deposit|marine|max|paycheck|salary|payroll/i.test(desc(t));
+      if(Math.abs(Math.abs(amt) - target) > 1.00) return false;
+      return /payroll|direct dep|deposit|marine|max|paycheck|salary/.test(txText(t));
     });
   }
 
-  window.paycheckReceived = paycheckActuallyPostedV41;
-  window.paycheckIsReceivedV20 = paycheckActuallyPostedV41;
-  window.receivedPaycheckV21 = paycheckActuallyPostedV41;
+  function futurePaycheckEventsV42(){
+    return paycheckListV42()
+      .filter(p => p.date >= currentToday() && !paycheckPostedV42(p))
+      .map(p => ({date:p.date, name:p.name, amount:p.amount, type:'Income'}));
+  }
 
-  window.futurePaycheckEventsV41 = function(){
-    return normalizedPaychecksV41()
-      .filter(p=>p.date >= todayIso() && !paycheckActuallyPostedV41(p))
-      .map(p=>({date:p.date, name:p.name, amount:p.amount, type:'Income'}));
-  };
+  function paidScheduledAmountV42(item){
+    try {
+      if(typeof paidForScheduled === 'function') return n(paidForScheduled(item));
+    } catch(e){}
+    if(item.kind === 'bill') return n((app.paidBills || {})[item.name]);
+    if(item.kind === 'card') return n((app.paidCards || {})[item.name]);
+    if(item.kind === 'loan') return n((app.paidLoans || {})[item.name]);
+    return 0;
+  }
 
-  const variableReserveEventsBaseV41 = window.variableReserveEventsV39 || function(){ return []; };
-  const unpaidScheduledBaseV41 = window.unpaidScheduledFuture || function(){ return []; };
+  function scheduledItemsV42(){
+    const fixedBills = (app.bills || [])
+      .filter(b => !V42_FIXED_BILL_EXCLUSIONS.has(b.name))
+      .map(b => ({kind:'bill', name:b.name, amount:n(b.amount), due:n(b.due || b.day || 1), bucket:'Bills'}));
 
-  window.cashflowRows = function(){
-    const starting = typeof currentCheckingBalance==='function' ? n(currentCheckingBalance()) : n(app.latestSchwabBalance);
-    let bal=starting;
-    const rows=[[todayIso(),'Latest Schwab/current checking balance',0,bal,'Start']];
-    const events=[];
-    futurePaycheckEventsV41().forEach(e=>events.push(e));
-    unpaidScheduledBaseV41().forEach(x=>events.push({date:isoDate(x.date), name:x.name+' ('+x.bucket+')', amount:-n(x.left), type:x.bucket}));
-    variableReserveEventsBaseV41().forEach(e=>events.push({...e, date:isoDate(e.date)}));
-    events
-      .filter(e=>e.date && n(e.amount)!==0)
-      .sort((a,b)=>a.date.localeCompare(b.date) || (n(b.amount)-n(a.amount)))
-      .forEach(e=>{
-        bal += n(e.amount);
-        rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<2500?'Low':'OK']);
-      });
+    const cards = (app.creditCards || [])
+      .map(c => ({kind:'card', name:c.name, amount:n(c.min || c.minimum || c.payment), due:n(c.due || c.dueDay || 1), bucket:'Credit Cards'}));
+
+    const loans = (app.loans || [])
+      .map(l => ({kind:'loan', name:l.name, amount:n(l.min || l.payment || l.amount), due:n(l.due || l.dueDay || 1), bucket:'Loans'}));
+
+    return [...fixedBills, ...cards, ...loans].filter(x => x.amount > 0);
+  }
+
+  function dateFromDayV42(day){
+    return `${currentMonth()}-${pad(Math.max(1, Math.min(31, n(day) || 1)))}`;
+  }
+
+  function fixedScheduledEventsV42(){
+    return scheduledItemsV42()
+      .map(x => {
+        const paid = paidScheduledAmountV42(x);
+        const left = Math.max(0, n(x.amount) - paid);
+        return {...x, paid, left, date: dateFromDayV42(x.due)};
+      })
+      .filter(x => x.left > 0.009 && x.date >= currentToday())
+      .map(x => ({date:x.date, name:`${x.name} (${x.bucket})`, amount:-x.left, type:x.bucket}));
+  }
+
+  function lastDayOfMonthV42(){
+    const [y,m] = currentMonth().split('-').map(Number);
+    return new Date(y, m, 0);
+  }
+
+  function remainingReserveDatesV42(){
+    const dates = [];
+    const today = new Date(currentToday() + 'T00:00:00');
+    const end = lastDayOfMonthV42();
+    for(let d = new Date(today); d <= end; d.setDate(d.getDate()+1)){
+      // Friday = 5. Use Friday as the weekly planning bucket.
+      if(d.getDay() === 5) dates.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`);
+    }
+    if(!dates.length) dates.push(`${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())}`);
+    return dates;
+  }
+
+  function txSpendForCategoryV42(name){
+    try {
+      if(typeof txSpendByCategory === 'function') return n(txSpendByCategory(name));
+    } catch(e){}
+    return (app.transactions || [])
+      .filter(t => currentMonthTx(t) && t.category === name)
+      .reduce((a,t) => a + Math.abs(n(t.amount)), 0);
+  }
+
+  function budgetRowsV42(){
+    const rows = [];
+    (app.spendingBudgets || []).forEach(b => rows.push({
+      name: b.name,
+      friendly: b.friendly || b.name,
+      budget: n(b.budget),
+      kind: 'monthly'
+    }));
+
+    // If variable necessities are still stored under bills in some months, include them here.
+    (app.bills || []).forEach(b => {
+      if(V42_FULL_RESERVE_CATEGORIES.has(b.name) && !rows.some(r => r.name === b.name)){
+        rows.push({name:b.name, friendly:b.name, budget:n(b.amount), kind:'variable-bill'});
+      }
+    });
+
+    return rows.filter(r => r.budget > 0);
+  }
+
+  function reservePlanV42(){
+    const dates = remainingReserveDatesV42();
+    const byDate = Object.fromEntries(dates.map(d => [d, 0]));
+    const detail = [];
+    const optional = [];
+
+    budgetRowsV42().forEach(b => {
+      const spent = txSpendForCategoryV42(b.name);
+      const remaining = Math.max(0, b.budget - spent);
+      if(remaining <= 0.009) return;
+
+      let probability = 0;
+      let included = false;
+      let mode = 'Excluded';
+
+      if(V42_FULL_RESERVE_CATEGORIES.has(b.name)){
+        probability = 1;
+        included = true;
+        mode = 'Predictable weekly reserve';
+      } else if(Object.prototype.hasOwnProperty.call(V42_PARTIAL_RESERVE_PROBABILITY, b.name)){
+        probability = V42_PARTIAL_RESERVE_PROBABILITY[b.name];
+        included = probability > 0;
+        mode = `${Math.round(probability * 100)}% probability reserve`;
+      }
+
+      const forecasted = remaining * probability;
+      const excluded = remaining - forecasted;
+
+      if(included && forecasted > 0.009){
+        const perDate = forecasted / dates.length;
+        dates.forEach(d => { byDate[d] += perDate; });
+        detail.push({category:b.name, budget:b.budget, spent, remaining, probability, forecasted, weekly:perDate, mode});
+      }
+
+      if(excluded > 0.009 || !included){
+        optional.push({category:b.name, remaining, included:forecasted, excluded: included ? excluded : remaining, reason: included ? 'Partially reserved' : 'Irregular / decision-based'});
+      }
+    });
+
+    const events = Object.entries(byDate)
+      .filter(([,amount]) => amount > 0.009)
+      .map(([date,amount]) => ({date, name:'Variable spending reserve (probability-based)', amount:-amount, type:'Variable Reserve'}));
+
+    return {dates, events, detail, optional};
+  }
+
+  function cashflowRowsV42(){
+    let bal = currentCheckingV42();
+    const rows = [[currentToday(), 'Latest Schwab/current checking balance', 0, bal, 'Start']];
+
+    const events = [
+      ...futurePaycheckEventsV42(),
+      ...fixedScheduledEventsV42(),
+      ...reservePlanV42().events
+    ].filter(e => e.date && Math.abs(n(e.amount)) > 0.009)
+     .sort((a,b) => a.date.localeCompare(b.date) || (n(b.amount) - n(a.amount)));
+
+    events.forEach(e => {
+      bal += n(e.amount);
+      rows.push([e.date, e.name, e.amount, bal, bal < 0 ? 'Negative' : bal < 2500 ? 'Low' : 'OK']);
+    });
+
     return rows;
-  };
+  }
+
+  window.cashflowRows = cashflowRowsV42;
+
+  function ensureProbabilityTablesV42(){
+    const section = document.querySelector('#cashflow .section');
+    if(!section) return;
+    if(!document.getElementById('cashflowReserveDetailV42')){
+      const wrap = document.createElement('div');
+      wrap.id = 'cashflowReserveDetailV42';
+      wrap.innerHTML = `
+        <h3>Probability-Based Variable Spending Reserve</h3>
+        <div class="small">
+          Predictable categories are recalculated from remaining monthly budget and spread across the remaining Fridays.
+          If a category is underspent this week, the unspent amount automatically rolls into the remaining forecast.
+        </div>
+        <table id="reserveDetailTableV42"></table>
+        <h3>Optional / Irregular Spending Not Deducted From Forecast</h3>
+        <div class="small">
+          These are real budget categories, but they are not treated like guaranteed weekly cash outflows.
+        </div>
+        <table id="optionalRiskTableV42"></table>`;
+      section.appendChild(wrap);
+    }
+  }
+
+  function renderProbabilityTablesV42(){
+    ensureProbabilityTablesV42();
+    const plan = reservePlanV42();
+    const detailTable = document.getElementById('reserveDetailTableV42');
+    const optionalTable = document.getElementById('optionalRiskTableV42');
+
+    if(detailTable){
+      detailTable.innerHTML =
+        '<tr><th>Category</th><th>Forecast Rule</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Remaining</th><th class="num">Forecasted</th><th class="num">Per Remaining Week</th></tr>' +
+        (plan.detail.length ? plan.detail.map(d => `
+          <tr>
+            <td>${safeEsc(d.category)}</td>
+            <td>${safeEsc(d.mode)}</td>
+            <td class="num">${safeMoney(d.budget)}</td>
+            <td class="num">${safeMoney(d.spent)}</td>
+            <td class="num">${safeMoney(d.remaining)}</td>
+            <td class="num">${safeMoney(d.forecasted)}</td>
+            <td class="num">${safeMoney(d.weekly)}</td>
+          </tr>`).join('') : '<tr><td colspan="7">No predictable variable spending left to reserve.</td></tr>');
+    }
+
+    if(optionalTable){
+      const totalExcluded = plan.optional.reduce((a,x)=>a+n(x.excluded),0);
+      optionalTable.innerHTML =
+        `<tr><th colspan="4">Potential optional/irregular spending not deducted: ${safeMoney(totalExcluded)}</th></tr>` +
+        '<tr><th>Category</th><th>Reason</th><th class="num">Remaining</th><th class="num">Not Deducted</th></tr>' +
+        (plan.optional.length ? plan.optional.map(o => `
+          <tr>
+            <td>${safeEsc(o.category)}</td>
+            <td>${safeEsc(o.reason)}</td>
+            <td class="num">${safeMoney(o.remaining)}</td>
+            <td class="num">${safeMoney(o.excluded)}</td>
+          </tr>`).join('') : '<tr><td colspan="4">No optional/irregular spending remaining.</td></tr>');
+    }
+  }
 
   window.renderCashflow = function(){
-    const table=document.getElementById('cashflowTable');
+    const table = document.getElementById('cashflowTable');
     if(!table) return;
-    if(hasApi() && !sheetReadyV41){
-      table.innerHTML='<tr><td class="small">Loading latest Google Sheet cash flow…</td></tr>';
-      return;
-    }
-    let rows='<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>';
-    cashflowRows().forEach(r=>{
-      const cls=r[4]==='Negative'?'bad':r[4]==='Low'?'warn':'ok';
-      rows+=`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`;
+
+    const plan = reservePlanV42();
+    const weeklyReserveTotal = plan.events.reduce((a,e)=>a+Math.abs(n(e.amount)),0);
+    let rows =
+      `<tr><th colspan="5">
+        Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve.
+        Remaining variable reserve this month: ${safeMoney(weeklyReserveTotal)}
+      </th></tr>` +
+      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>';
+
+    cashflowRowsV42().forEach(r => {
+      const cls = r[4] === 'Negative' ? 'bad' : r[4] === 'Low' ? 'warn' : 'ok';
+      rows += `<tr><td>${safeEsc(r[0])}</td><td>${safeEsc(r[1])}</td><td class="num">${safeMoney(r[2])}</td><td class="num ${cls}">${safeMoney(r[3])}</td><td><span class="pill ${cls}">${safeEsc(r[4])}</span></td></tr>`;
     });
-    table.innerHTML=rows;
+
+    table.innerHTML = rows;
+    renderProbabilityTablesV42();
   };
 
-  function renderSheetLoadingV41(){
-    const top=document.getElementById('topMetrics');
-    if(top){
-      top.innerHTML=['Checking now','Monthly spend left','Sinking fund net','Needs review','Sheet sync','Budget month','Current-month tx','Latest Schwab balance row']
-        .map(label=>`<div class="metric"><div class="label">${label}</div><div class="value loading-value">Loading</div></div>`).join('');
+  // Keep "Upcoming Scheduled Money Out" from listing variable spending as fixed bills.
+  const previousUnpaidScheduledFutureV42 = typeof unpaidScheduledFuture === 'function' ? unpaidScheduledFuture : null;
+  window.unpaidScheduledFuture = function(){
+    if(previousUnpaidScheduledFutureV42){
+      try {
+        return previousUnpaidScheduledFutureV42().filter(x => !V42_FIXED_BILL_EXCLUSIONS.has(x.name));
+      } catch(e){}
     }
-    const kv=document.getElementById('katyView'); if(kv) kv.innerHTML='<div class="small">Loading latest Google Sheet data…</div>';
-    const jv=document.getElementById('joeView'); if(jv) jv.innerHTML='<div class="small">Loading latest Google Sheet data…</div>';
-    const cf=document.getElementById('cashflowTable'); if(cf) cf.innerHTML='<tr><td class="small">Loading latest Google Sheet cash flow…</td></tr>';
-  }
+    return fixedScheduledEventsV42().map(e => ({
+      date:e.date,
+      name:e.name.replace(/\s+\([^)]+\)$/,''),
+      bucket:e.type,
+      left:Math.abs(n(e.amount))
+    }));
+  };
 
-  // Wrap loadFromSheet so final loaded data renders only after the Sheet response lands.
-  const previousLoadFromSheetV41 = typeof loadFromSheet==='function' ? loadFromSheet : null;
-  if(previousLoadFromSheetV41){
+  // Make sure future paychecks stay visible after Sheet load and after any old renderer runs.
+  const previousLoadFromSheetV42 = typeof loadFromSheet === 'function' ? loadFromSheet : null;
+  if(previousLoadFromSheetV42){
     window.loadFromSheet = async function(){
-      loadStartedV41 = true;
-      sheetReadyV41 = false;
-      renderSheetLoadingV41();
-      const result = await previousLoadFromSheetV41.apply(this, arguments);
-      sheetReadyV41 = true;
-      try{ render(); renderCashflow(); }catch(e){ console.warn('v41 final render after load failed', e); }
+      const result = await previousLoadFromSheetV42.apply(this, arguments);
+      setTimeout(() => { try { renderCashflow(); } catch(e){ console.warn('v42 cashflow after load failed', e); } }, 0);
+      setTimeout(() => { try { renderCashflow(); } catch(e){} }, 300);
       return result;
     };
   }
 
-  const previousRenderV41 = typeof render==='function' ? render : null;
-  if(previousRenderV41){
+  const previousRenderV42 = typeof render === 'function' ? render : null;
+  if(previousRenderV42){
     window.render = function(){
-      if(hasApi() && !sheetReadyV41 && loadStartedV41){
-        renderSheetLoadingV41();
-        return;
-      }
-      const result = previousRenderV41.apply(this, arguments);
-      try{ renderCashflow(); }catch(e){ console.warn('v41 renderCashflow failed', e); }
+      const result = previousRenderV42.apply(this, arguments);
+      try { renderCashflow(); } catch(e){ console.warn('v42 renderCashflow failed', e); }
       return result;
     };
   }
 
-  // If the page has a Sheet URL, do not leave stale embedded numbers on screen while the real Sheet loads.
-  setTimeout(()=>{
-    if(hasApi() && !sheetReadyV41){
-      renderSheetLoadingV41();
-      if(previousLoadFromSheetV41 && !loadStartedV41){
-        window.loadFromSheet().catch(e=>{
-          sheetReadyV41=true;
-          console.error('v41 load failed', e);
-          try{ render(); renderCashflow(); }catch(_){ }
-        });
-      }
-    } else {
-      try{ renderCashflow(); }catch(e){ console.warn('v41 cashflow initial render failed', e); }
-    }
-  },0);
+  // Update notice copy.
+  const cashNotice = document.querySelector('#cashflow .notice');
+  if(cashNotice){
+    cashNotice.innerHTML = 'Past spending is already reflected in the latest Schwab balance. Forecast includes future paychecks, fixed bills/debt payments, and probability-based reserves for remaining variable spending.';
+  }
+
+  try { renderCashflow(); } catch(e){ console.warn('v42 initial cashflow failed', e); }
 })();
 </script>
 
