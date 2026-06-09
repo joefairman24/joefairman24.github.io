@@ -3910,3 +3910,107 @@ button.tiny-btn {
   try { renderCashflow(); } catch(e) { console.warn('v50 full cashflow repair render skipped', e); }
 })();
 </script>
+
+<script>
+/* ===== v51: Loan confirmed-paid allocation fix ONLY =====
+   Problem fixed: Mortgage and HELOC share the same Schwab/NFCU description, so the old matcher
+   counted both NFCU loan transactions for both loans. This patch allocates each unsplit loan
+   payment to exactly one loan using the closest expected/minimum payment amount.
+*/
+(function(){
+  function numV51(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
+  function absV51(v){ return Math.abs(numV51(v)); }
+  function upperV51(s){ return String(s||'').toUpperCase(); }
+  function txDescV51(t){ return upperV51((t?.rawDescription||'')+' '+(t?.description||'')); }
+  function inMonthV51(t){
+    if(typeof currentMonthTxV21 === 'function') return currentMonthTxV21(t);
+    if(typeof inBudgetMonth === 'function') return inBudgetMonth(t);
+    return String(t?.date||'').slice(0,7) === String(app?.month||'');
+  }
+  function splitsV51(t){ return Array.isArray(t?.splits) ? t.splits : []; }
+  function loanKeysV51(loan){
+    const keys=[...(loan.paymentKeywords||[]), loan.name||''];
+    const name=upperV51(loan.name||'');
+    if(name.includes('MORTGAGE') || name.includes('NAVY')) keys.push('NFCU MORT DEBIT');
+    if(name.includes('HELOC')) keys.push('NFCU MORT DEBIT');
+    if(name.includes('BRIDGECREST')) keys.push('BRIDGECREST');
+    if(name.includes('WELLS FARGO')) keys.push('WELLS FARGO');
+    if(name.includes('APPLE WATCH')) keys.push('APPLE WATCH');
+    return [...new Set(keys.map(upperV51).filter(Boolean))];
+  }
+  function isLoanPaymentTxV51(t){
+    if(!inMonthV51(t)) return false;
+    const cat=String(t.category||'');
+    const treatment=String(t.treatment||'');
+    const d=txDescV51(t);
+    return cat==='Loan Payment' || treatment==='Loan Payment' || /NFCU MORT|BRIDGECREST|WELLS FARGO|APPLE WATCH/.test(d);
+  }
+  function expectedLoanPaymentV51(loan){
+    return absV51(loan.expected || loan.min || loan.payment || 0);
+  }
+  function loanPaidMapV51(){
+    const loans=app.loans||[];
+    const out={};
+    loans.forEach(l=>out[l.name]=0);
+
+    // 1) Exact split rows win. A split category names the loan directly, so no guessing.
+    (app.transactions||[]).filter(isLoanPaymentTxV51).forEach(t=>{
+      const sp=splitsV51(t);
+      if(!sp.length) return;
+      sp.forEach(s=>{
+        if(out[s.category] !== undefined && ['Loan Payment','Auto',''].includes(String(s.treatment||'Auto'))){
+          out[s.category] += absV51(s.amount);
+        }
+      });
+    });
+
+    // 2) For unsplit loan-payment transactions, assign each transaction to ONE best loan.
+    // This is the actual fix for Mortgage + HELOC sharing “NFCU MORT DEBIT”.
+    (app.transactions||[]).filter(t=>isLoanPaymentTxV51(t) && !splitsV51(t).length).forEach(t=>{
+      const d=txDescV51(t);
+      const amt=absV51(t.amount);
+      if(!amt) return;
+
+      const candidates=loans.filter(l=>loanKeysV51(l).some(k=>d.includes(k)));
+      if(!candidates.length) return;
+
+      let winner=candidates[0];
+      let bestDiff=Math.abs(amt-expectedLoanPaymentV51(winner));
+      candidates.forEach(l=>{
+        const diff=Math.abs(amt-expectedLoanPaymentV51(l));
+        if(diff < bestDiff){ winner=l; bestDiff=diff; }
+      });
+      out[winner.name] = (out[winner.name]||0) + amt;
+    });
+
+    // 3) Fallback: if no matching transaction was found for a loan, keep the Sheet-provided paidLoans value.
+    loans.forEach(l=>{
+      if((out[l.name]||0) <= 0 && app.paidLoans && numV51(app.paidLoans[l.name]) > 0){
+        out[l.name] = numV51(app.paidLoans[l.name]);
+      }
+      out[l.name] = Math.round((out[l.name]||0)*100)/100;
+    });
+    return out;
+  }
+
+  window.loanPaidMapStable = loanPaidMapV51;
+
+  const previousPaidForScheduledV51 = window.paidForScheduled;
+  window.paidForScheduled = function(x){
+    if(x && x.kind==='loan') return loanPaidMapV51()[x.name] || 0;
+    return typeof previousPaidForScheduledV51 === 'function' ? previousPaidForScheduledV51(x) : 0;
+  };
+
+  const previousRenderDebtsV51 = window.renderDebts;
+  window.renderDebts = function(){
+    if(typeof previousRenderDebtsV51 === 'function') previousRenderDebtsV51();
+    const table=document.getElementById('loanTable');
+    if(!table) return;
+    const paid=loanPaidMapV51();
+    table.innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Payment</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+
+      (app.loans||[]).map(l=>`<tr><td>${esc(l.name)}</td><td class="num">${money(absV51(l.owed))}</td><td class="num">${money(l.min)}</td><td class="num">${money(paid[l.name]||0)}</td><td>${esc(l.due)}</td><td class="num">${numV51(l.apr).toFixed(2)}%</td></tr>`).join('');
+  };
+
+  try { renderDebts(); renderCashflow(); renderDaily(); } catch(e){ console.warn('v51 loan paid fix render skipped', e); }
+})();
+</script>
