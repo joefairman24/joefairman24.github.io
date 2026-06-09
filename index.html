@@ -3584,4 +3584,144 @@ button.tiny-btn {
 })();
 </script>
 
+
+<script>
+/* ===== v49: Cash Flow income repair ONLY =====
+   Fixes missing paycheck rows in Cash Flow without touching splits, debts, budgets, imports, or cards/loans/bills.
+   Problem: paychecks loaded from Sheets can have non-ISO dates, stale received flags, or missing rows.
+   Fix: normalize paycheck dates, fall back to the embedded paycheck schedule by name, and only hide a future paycheck if a real matching deposit exists.
+*/
+(function(){
+  function n49(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
+  function abs49(v){ return Math.abs(n49(v)); }
+  function today49(){
+    const raw = (app && app.today) ? app.today : new Date().toISOString().slice(0,10);
+    return normalizeDate49(raw) || String(raw).slice(0,10);
+  }
+  function normalizeDate49(value){
+    if(value === undefined || value === null || value === '') return '';
+    if(typeof value === 'number'){
+      // Google Sheets serial date fallback. 25569 = 1970-01-01.
+      const d = new Date(Math.round((value - 25569) * 86400 * 1000));
+      if(!Number.isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    }
+    const raw = String(value).trim();
+    let m = raw.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+    m = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+    if(m){
+      const y = m[3].length === 2 ? '20' + m[3] : m[3];
+      return `${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+    }
+    const d = new Date(raw);
+    if(!Number.isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    return raw.slice(0,10);
+  }
+  function initialPaychecks49(){
+    try { return (initialData && Array.isArray(initialData.paychecks)) ? initialData.paychecks : []; }
+    catch(e){ return []; }
+  }
+  function normalizedPaychecks49(){
+    const byName = new Map();
+    initialPaychecks49().forEach(p => {
+      if(p && p.name) byName.set(String(p.name), {...p, date: normalizeDate49(p.date), amount: n49(p.amount)});
+    });
+    (app.paychecks || []).forEach(p => {
+      if(!p) return;
+      const name = String(p.name || p.type || p.label || '').trim();
+      if(!name) return;
+      const fallback = byName.get(name) || {};
+      byName.set(name, {
+        ...fallback,
+        ...p,
+        name,
+        date: normalizeDate49(p.date || p.payDate || p.paymentDate || fallback.date),
+        amount: n49(p.amount || fallback.amount),
+        received: p.received
+      });
+    });
+    return [...byName.values()].filter(p => p.name && p.date && p.amount).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  }
+  function isSchwab49(t){ return String(t.source || t.account || '').toLowerCase().includes('schwab'); }
+  function inMonth49(t){ return String(t.date || '').slice(0,7) === String(app.month || '').slice(0,7); }
+  function realDepositExistsForPaycheck49(p){
+    const target = abs49(p.amount);
+    if(!target) return false;
+    return (app.transactions || []).some(t => {
+      const amt = n49(t.amount);
+      if(amt <= 0) return false;
+      if(!inMonth49(t)) return false;
+      if(!isSchwab49(t)) return false;
+      if(Math.abs(abs49(amt) - target) > 1.00) return false;
+      const desc = String(t.description || t.rawDescription || '').toLowerCase();
+      return desc.includes('payroll') || desc.includes('deposit') || desc.includes('direct dep') || desc.includes('marinemax') || true;
+    });
+  }
+  function paycheckShouldShowInCashflow49(p){
+    const pDate = normalizeDate49(p.date);
+    const tDate = today49();
+    if(!pDate || pDate < tDate) return false;
+    // Future stale TRUE/FALSE values from the sheet are not trusted. Only a real matching deposit hides income.
+    return !realDepositExistsForPaycheck49({...p, date:pDate});
+  }
+  function variableReserveEvents49(){
+    // Use the existing probability-reserve logic if present; otherwise no reserve. This avoids touching that model.
+    try {
+      if(typeof variableReserveEvents === 'function') return variableReserveEvents();
+    } catch(e) {}
+    return [];
+  }
+  function fixedScheduledFuture49(){
+    try {
+      if(typeof unpaidScheduledFuture === 'function') return unpaidScheduledFuture();
+    } catch(e) {}
+    return [];
+  }
+  function startingBalance49(){
+    try {
+      if(typeof latestSchwabBalanceStable === 'function') return n49(latestSchwabBalanceStable());
+      if(typeof currentCheckingBalanceV21 === 'function') return n49(currentCheckingBalanceV21());
+      if(typeof currentCheckingBalance === 'function') return n49(currentCheckingBalance());
+    } catch(e) {}
+    return n49(app.latestSchwabBalance);
+  }
+
+  window.cashflowRows = function(){
+    let bal = startingBalance49();
+    const rows = [[today49(), 'Latest Schwab/current checking balance', 0, bal, 'Start']];
+    const events = [];
+
+    normalizedPaychecks49().forEach(p => {
+      if(paycheckShouldShowInCashflow49(p)) events.push({date: normalizeDate49(p.date), name: p.name, amount: n49(p.amount), type: 'Income'});
+    });
+
+    fixedScheduledFuture49().forEach(x => events.push({date: normalizeDate49(x.date), name: x.name + ' (' + x.bucket + ')', amount: -n49(x.left), type: x.bucket}));
+    variableReserveEvents49().forEach(e => events.push({...e, date: normalizeDate49(e.date), amount: n49(e.amount)}));
+
+    events
+      .filter(e => e.date && e.date >= today49() && n49(e.amount) !== 0)
+      .sort((a,b) => String(a.date).localeCompare(String(b.date)) || (String(a.type)==='Income' ? -1 : 1))
+      .forEach(e => {
+        bal += n49(e.amount);
+        rows.push([e.date, e.name, e.amount, bal, bal < 0 ? 'Negative' : bal < 2500 ? 'Low' : 'OK']);
+      });
+    return rows;
+  };
+
+  window.renderCashflow = function(){
+    const table = document.getElementById('cashflowTable');
+    if(!table) return;
+    const reserveTotal = variableReserveEvents49().reduce((a,e)=>a+Math.abs(n49(e.amount)),0);
+    table.innerHTML = `<tr><th colspan="5">Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve. Remaining variable reserve this month: ${money(reserveTotal)}</th></tr>` +
+      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>' +
+      cashflowRows().map(r => {
+        const cls = r[4] === 'Negative' ? 'bad' : r[4] === 'Low' ? 'warn' : 'ok';
+        return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`;
+      }).join('');
+  };
+
+  try { renderCashflow(); } catch(e) { console.warn('v49 cashflow income repair render skipped', e); }
+})();
+</script>
+
 </body></html>
