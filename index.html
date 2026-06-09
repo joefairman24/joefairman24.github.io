@@ -4015,116 +4015,150 @@ button.tiny-btn {
 })();
 </script>
 
-
 <script>
-/* ===== v53b: Bills / Necessities confirmed-paid fix ONLY =====
-   Source of truth: the attached index.html. This patch only changes the Bills / Necessities
-   confirmed-paid calculation/render. It does not touch cash flow, checking balance,
-   transaction ordering, owners, daily cards, credit cards, loans, imports, or Apps Script.
+/* ===== v53: Cash-flow carryover safety buffer =====
+   Fixes the probability forecast marking an end-of-month balance as OK when it is
+   technically above $2,500 but not enough to survive the first few days of next month.
+   The OK threshold is now: minimum checking buffer + expected cash needed in days 1-6
+   of next month for fixed bills/debt/loans + probability-based variable spending.
 */
 (function(){
-  function nV53(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
-  function absV53(v){ return Math.abs(nV53(v)); }
-  function upperV53(s){ return String(s||'').toUpperCase(); }
-  function descV53(t){ return upperV53(((t && t.rawDescription) || '') + ' ' + ((t && t.description) || '')); }
-  function inMonthV53(t){
-    if(typeof currentMonthTxV21 === 'function') return currentMonthTxV21(t);
-    if(typeof inBudgetMonth === 'function') return inBudgetMonth(t);
-    return String((t && t.date) || '').slice(0,7) === String(app.month || '');
+  const previousCashflowRowsV53 = window.cashflowRows;
+  const previousRenderCashflowV53 = window.renderCashflow;
+  const EARLY_MONTH_DAYS_V53 = 6;
+
+  function n53(v){ const n=Number(v); return Number.isFinite(n) ? n : 0; }
+  function abs53(v){ return Math.abs(n53(v)); }
+  function month53(){ return String((app && app.month) || new Date().toISOString().slice(0,7)).slice(0,7); }
+  function minimumBuffer53(){
+    if(typeof minimumCheckingBuffer === 'function') return n53(minimumCheckingBuffer()) || 2500;
+    return n53(app.minimumCheckingBuffer || app.buffer || app.minCheckingBuffer || 2500) || 2500;
   }
-  function treatmentV53(t){ return String((t && (t.treatment || t.type)) || 'Auto'); }
-  function splitsV53(t){ return Array.isArray(t && t.splits) ? t.splits : []; }
-
-  const VARIABLE_BILL_NAMES_V53 = new Set([
-    'Groceries',
-    'Dog Food',
-    'Auto Fuel & Maintenance',
-    'Basic Health & Personal Care',
-    'House Cleaning',
-    'Services'
-  ]);
-
-  function isVariableBillV53(name){ return VARIABLE_BILL_NAMES_V53.has(String(name || '')); }
-
-  function billKeysV53(bill){
-    const keys = [...(bill.paymentKeywords || []), bill.name || ''];
-    const name = upperV53(bill.name || '');
-    if(name.includes('DOMINION')) keys.push('DOMINION','DOMINION ENERGY');
-    if(name.includes('HRSD')) keys.push('HRSD');
-    if(name.includes('VIRGINIA BEACH PUBLIC')) keys.push('VIRGINIA BEACH PUBLIC UTILITIES','VB PUBLIC UTILITIES');
-    if(name.includes('VERIZON')) keys.push('VERIZON');
-    if(name.includes('T-MOBILE')) keys.push('T-MOBILE','TMOBILE');
-    if(name.includes('CAR INSURANCE')) keys.push('GRANGE INSURANCE','GRANGE');
-    if(name.includes('ICLOUD')) keys.push('ICLOUD');
-    if(name.includes('SPOTIFY')) keys.push('SPOTIFY');
-    if(name.includes('APPLE TV')) keys.push('APPLE TV');
-    if(name.includes('APPLE CARE')) keys.push('APPLE CARE');
-    return [...new Set(keys.map(upperV53).filter(Boolean))];
+  function nextMonth53(month){
+    const [y,m] = String(month || month53()).split('-').map(Number);
+    const d = new Date(y || new Date().getFullYear(), m || 1, 1);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
   }
-
-  function fixedBillPaidFromTransactionsV53(bill){
-    const keys = billKeysV53(bill);
+  function daysInMonth53(month){
+    const [y,m] = String(month || month53()).split('-').map(Number);
+    if(!y || !m) return 30;
+    return new Date(y, m, 0).getDate();
+  }
+  function monthEndDate53(month){
+    const [y,m] = String(month || month53()).split('-').map(Number);
+    const d = new Date(y || new Date().getFullYear(), m || 1, 0);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  function variableNames53(){
+    return new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']);
+  }
+  function reserveWeight53(name){
+    if(['Groceries','Dog Food','Auto Fuel & Maintenance','Services','House Cleaning','Household Consumables'].includes(name)) return 1;
+    if(['Basic Health & Personal Care','Kids Miscellaneous','Kids Experiences','Date Nights','Alcohol & Entertainment','Household Miscellaneous'].includes(name)) return 0.65;
+    return 0;
+  }
+  function fixedEarlyNextMonthNeed53(){
+    const variable = variableNames53();
     let total = 0;
-    (app.transactions || []).forEach(t => {
-      if(!inMonthV53(t)) return;
-      const cat = String(t.category || '');
-      const tr = treatmentV53(t);
-      if(cat === 'Income' || cat === 'Debt Payment' || cat === 'Loan Payment') return;
-      if(tr === 'Income' || tr === 'Debt Payment' || tr === 'Loan Payment' || tr === 'Ignore / Transfer') return;
-
-      const sp = splitsV53(t);
-      if(sp.length){
-        sp.forEach(s => {
-          if(String(s.category || '') === bill.name) total += absV53(s.amount);
-        });
-        return;
-      }
-
-      const matchesCategory = cat === bill.name;
-      const matchesKeyword = keys.some(k => descV53(t).includes(k));
-      if(matchesCategory || matchesKeyword) total += absV53(t.amount);
+    (app.bills || []).forEach(b=>{
+      const due = Number(b.due) || 1;
+      if(due <= EARLY_MONTH_DAYS_V53 && !variable.has(b.name)) total += abs53(b.amount);
+    });
+    (app.creditCards || []).forEach(c=>{
+      const due = Number(c.due) || 1;
+      if(due <= EARLY_MONTH_DAYS_V53) total += abs53(c.min);
+    });
+    (app.loans || []).forEach(l=>{
+      const due = Number(l.due) || 1;
+      if(due <= EARLY_MONTH_DAYS_V53) total += abs53(l.min);
     });
     return Math.round(total * 100) / 100;
   }
-
-  function variableBillPaidV53(bill){
-    if(typeof txSpendByCategory === 'function'){
-      const spent = nV53(txSpendByCategory(bill.name));
-      if(Math.abs(spent) > 0.009) return Math.round(spent * 100) / 100;
-    }
-    return fixedBillPaidFromTransactionsV53(bill);
+  function earlyVariableNeed53(){
+    const days = EARLY_MONTH_DAYS_V53;
+    const dim = daysInMonth53(nextMonth53());
+    const rows=[];
+    (app.spendingBudgets || []).forEach(b=>rows.push({name:b.name, budget:n53(b.budget)}));
+    (app.bills || []).forEach(b=>{
+      if(variableNames53().has(b.name) && !rows.some(r=>r.name===b.name)) rows.push({name:b.name, budget:n53(b.amount)});
+    });
+    const total = rows.reduce((a,b)=>a + (n53(b.budget) * reserveWeight53(b.name) * days / dim), 0);
+    return Math.round(total * 100) / 100;
   }
-
-  function billPaidV53(bill){
-    let paid = isVariableBillV53(bill.name) ? variableBillPaidV53(bill) : fixedBillPaidFromTransactionsV53(bill);
-    if(Math.abs(paid) < 0.009 && app.paidBills && nV53(app.paidBills[bill.name]) > 0){
-      paid = nV53(app.paidBills[bill.name]);
-    }
-    return Math.round(paid * 100) / 100;
+  function earlyNextMonthNeed53(){
+    return {
+      fixed: fixedEarlyNextMonthNeed53(),
+      variable: earlyVariableNeed53()
+    };
   }
-
-  const previousPaidForScheduledV53 = window.paidForScheduled;
-  window.paidForScheduled = function(x){
-    if(x && x.kind === 'bill'){
-      const bill = (app.bills || []).find(b => b.name === x.name);
-      return bill ? billPaidV53(bill) : 0;
-    }
-    return typeof previousPaidForScheduledV53 === 'function' ? previousPaidForScheduledV53(x) : 0;
+  function carryoverFloor53(){
+    const need = earlyNextMonthNeed53();
+    return Math.round((minimumBuffer53() + need.fixed + need.variable) * 100) / 100;
+  }
+  function statusForBalance53(balance){
+    const bal = n53(balance);
+    if(bal < 0) return 'Negative';
+    if(bal < minimumBuffer53()) return 'Low';
+    if(bal < carryoverFloor53()) return 'Carryover Risk';
+    return 'OK';
+  }
+  function statusClass53(status){
+    if(status === 'Negative') return 'bad';
+    if(status === 'Low' || status === 'Carryover Risk') return 'warn';
+    return 'ok';
+  }
+  window.cashflowCarryoverNeedV53 = function(){
+    const need = earlyNextMonthNeed53();
+    return {
+      fixed: need.fixed,
+      variable: need.variable,
+      minimumBuffer: minimumBuffer53(),
+      totalFloor: carryoverFloor53(),
+      firstDays: EARLY_MONTH_DAYS_V53,
+      nextMonth: nextMonth53()
+    };
   };
 
-  const previousRenderDebtsV53 = window.renderDebts;
-  window.renderDebts = function(){
-    if(typeof previousRenderDebtsV53 === 'function') previousRenderDebtsV53.apply(this, arguments);
-    const table = document.getElementById('billTable');
+  window.cashflowRows = function(){
+    const baseRows = (typeof previousCashflowRowsV53 === 'function') ? previousCashflowRowsV53() : [];
+    const rows = baseRows.map(r=>[r[0], r[1], r[2], r[3], statusForBalance53(r[3])]);
+    if(rows.length){
+      const last = rows[rows.length - 1];
+      const endDate = monthEndDate53(month53());
+      const carry = window.cashflowCarryoverNeedV53();
+      rows.push([
+        endDate,
+        `Next-month first-${carry.firstDays}-days reserve check`,
+        0,
+        last[3],
+        statusForBalance53(last[3])
+      ]);
+    }
+    return rows;
+  };
+
+  window.renderCashflow = function(){
+    const table = document.getElementById('cashflowTable');
     if(!table) return;
-    table.innerHTML = '<tr><th>Name</th><th class="num">Budget</th><th class="num">Confirmed Paid</th><th>Due</th></tr>' +
-      (app.bills || []).map(b => {
-        const paid = billPaidV53(b);
-        const label = isVariableBillV53(b.name) ? '<div class="tiny">Variable monthly spending</div>' : '';
-        return `<tr><td>${esc(b.name)}${label}</td><td class="num">${money(b.amount)}</td><td class="num">${money(paid)}</td><td>${esc(b.due)}</td></tr>`;
+    const carry = window.cashflowCarryoverNeedV53();
+    let variableReserveTotal = 0;
+    let sinkingContributionTotal = 0;
+    try {
+      // Pull these from the rendered v50 model when possible by deriving from row names.
+      const baseRows = (typeof previousCashflowRowsV53 === 'function') ? previousCashflowRowsV53() : [];
+      variableReserveTotal = baseRows.filter(r=>String(r[1]).includes('Variable spending reserve')).reduce((a,r)=>a+abs53(r[2]),0);
+      sinkingContributionTotal = baseRows.filter(r=>String(r[1]).includes('sinking fund contribution')).reduce((a,r)=>a+abs53(r[2]),0);
+    } catch(e) {}
+    table.innerHTML =
+      `<tr><th colspan="5">Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve + planned sinking-fund contributions. Remaining variable reserve: ${money(variableReserveTotal)} | Remaining sinking-fund contributions: ${money(sinkingContributionTotal)}</th></tr>` +
+      `<tr><th colspan="5">Carryover safety rule: OK now requires ${money(carry.totalFloor)} ending checking (${money(carry.minimumBuffer)} buffer + ${money(carry.fixed)} fixed/debt due in first ${carry.firstDays} days of ${carry.nextMonth} + ${money(carry.variable)} estimated variable spending). Anything below that is Carryover Risk, even if it is above ${money(carry.minimumBuffer)}.</th></tr>` +
+      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>' +
+      cashflowRows().map(r=>{
+        const cls = statusClass53(r[4]);
+        return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`;
       }).join('');
   };
 
-  try { renderDebts(); } catch(e){ console.warn('v53b bills confirmed-paid fix render skipped', e); }
+  try { renderCashflow(); } catch(e){ console.warn('v53 carryover cashflow patch render skipped', e); }
 })();
 </script>
