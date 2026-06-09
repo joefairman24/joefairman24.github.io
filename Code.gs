@@ -693,3 +693,112 @@ function buildPaidMap(items, transactions, typeName) {
 
   return out;
 }
+
+/* ===== v48 backend repair: date-aware paychecks + split/closest-match paid maps ===== */
+function v48DateString_(v) { return asDateString(v || ''); }
+function v48DateDiffDays_(a, b) {
+  var da = new Date(v48DateString_(a) + 'T00:00:00');
+  var db = new Date(v48DateString_(b) + 'T00:00:00');
+  if (isNaN(da.getTime()) || isNaN(db.getTime())) return 9999;
+  return Math.abs((da.getTime() - db.getTime()) / 86400000);
+}
+function updateReceivedPaychecks(transactions) {
+  var sh = getSheet('Paychecks');
+  if (!sh) return;
+  var range = sh.getDataRange();
+  var values = range.getValues();
+  if (values.length < 2) return;
+  var headers = values[0].map(function(h) { return String(h).trim(); });
+  var receivedCol = headers.indexOf('Received');
+  if (receivedCol < 0) {
+    receivedCol = headers.length;
+    sh.getRange(1, receivedCol + 1).setValue('Received');
+    headers.push('Received');
+  }
+  var dateCol = headers.indexOf('Date');
+  var amountCol = headers.indexOf('Amount');
+  if (dateCol < 0 || amountCol < 0) return;
+  var tx = (transactions || []).map(function(t) {
+    return {
+      date: asDateString(t.date || t.posted || ''),
+      amount: asNum(t.amount),
+      description: t.description || '',
+      rawDescription: t.rawDescription || '',
+      source: String((t.source || '') + ' ' + (t.account || '')).toLowerCase()
+    };
+  });
+  for (var r = 1; r < values.length; r++) {
+    var pDate = asDateString(values[r][dateCol]);
+    var pAmount = asNum(values[r][amountCol]);
+    var matched = tx.some(function(t) {
+      if (t.amount <= 0) return false;
+      if (Math.abs(Math.abs(t.amount) - Math.abs(pAmount)) > 1.00) return false;
+      if (v48DateDiffDays_(t.date, pDate) > 3) return false;
+      var desc = String((t.description || '') + ' ' + (t.rawDescription || '')).toLowerCase();
+      return t.source.indexOf('schwab') >= 0 || desc.indexOf('payroll') >= 0 || desc.indexOf('direct dep') >= 0 || desc.indexOf('deposit') >= 0;
+    });
+    sh.getRange(r + 1, receivedCol + 1).setValue(!!matched);
+  }
+}
+
+function v48PaymentKeywords_(item) {
+  var keys = [];
+  (item.paymentKeywords || []).forEach(function(k) { if (k) keys.push(k); });
+  keys.push(item.name || '');
+  var name = String(item.name || '').toUpperCase();
+  if (name.indexOf('APPLE CARD') >= 0) keys = keys.concat(['APPLECARD GSBANK','APPLECARD','APPLE CARD']);
+  if (name.indexOf('BEST BUY') >= 0) keys.push('BEST BUY');
+  if (name.indexOf('LOWES') >= 0) keys = keys.concat(['LOWES','LOWE']);
+  if (name.indexOf('CHASE') >= 0 || name.indexOf('AMAZON PRIME') >= 0) keys = keys.concat(['CHASE CREDIT CARD','CHASE CREDIT','CHASE','AMAZON PRIME VISA']);
+  if (name.indexOf('U.S. BANK') >= 0 || name.indexOf('US BANK') >= 0) keys = keys.concat(['US BANK','U S BANK','U.S. BANK']);
+  if (name.indexOf('MORTGAGE') >= 0 || name.indexOf('NAVY FEDERAL') >= 0 || name.indexOf('HELOC') >= 0) keys.push('NFCU MORT DEBIT');
+  if (name.indexOf('BRIDGECREST') >= 0) keys.push('BRIDGECREST');
+  if (name.indexOf('WELLS FARGO') >= 0) keys.push('WELLS FARGO');
+  if (name.indexOf('APPLE WATCH') >= 0) keys.push('APPLE WATCH');
+  return Array.from(new Set(keys.map(v38Norm_).filter(function(k) { return k.length >= 4; })));
+}
+function v48LooksLikePayment_(t, typeName) {
+  var d = v38Norm_((t.rawDescription || '') + ' ' + (t.description || ''));
+  var cat = String(t.category || '');
+  var tr = String(t.treatment || '');
+  if (cat === typeName || tr === typeName) return true;
+  if (typeName === 'Debt Payment') return /PAYMENT|PYMT|APPLECARD|CHASE|LOWES|LOWE|BEST BUY|US BANK|U S BANK/.test(d);
+  if (typeName === 'Loan Payment') return /NFCU MORT|BRIDGECREST|WELLS FARGO|APPLE WATCH/.test(d);
+  return false;
+}
+function buildPaidMap(items, transactions, typeName) {
+  var out = {};
+  (items || []).forEach(function(item) { out[item.name] = 0; });
+  (transactions || []).forEach(function(t) {
+    var splits = Array.isArray(t.splits) ? t.splits : parseSplitsV29_(t.splits);
+    if (splits.length) {
+      splits.forEach(function(s) {
+        if (out.hasOwnProperty(String(s.category || '')) && String(s.treatment || '') === typeName) {
+          out[String(s.category || '')] += v38Abs_(s.amount);
+        }
+      });
+      return;
+    }
+    if (!v48LooksLikePayment_(t, typeName)) return;
+    var amount = v38Abs_(t.amount);
+    if (!amount) return;
+    var d = v38Norm_((t.rawDescription || '') + ' ' + (t.description || ''));
+    var matches = (items || []).filter(function(item) {
+      return v48PaymentKeywords_(item).some(function(k) { return d.indexOf(k) >= 0; });
+    });
+    if (!matches.length) return;
+    var winner = matches[0];
+    var best = Math.abs(amount - asNum(matches[0].expected || matches[0].min || matches[0].amount));
+    matches.forEach(function(item) {
+      var diff = Math.abs(amount - asNum(item.expected || item.min || item.amount));
+      if (diff < best) { winner = item; best = diff; }
+    });
+    out[winner.name] += amount;
+  });
+  Object.keys(out).forEach(function(k) { out[k] = Math.round(out[k] * 100) / 100; });
+  return out;
+}
+
+function paidMapV36_(items, transactions, typeName) {
+  return buildPaidMap(items, transactions, typeName);
+}
