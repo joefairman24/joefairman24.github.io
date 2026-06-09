@@ -3725,3 +3725,188 @@ button.tiny-btn {
 </script>
 
 </body></html>
+<script>
+/* ===== v50: Cash Flow full forecast repair ONLY =====
+   Restores the complete Cash Flow model after the v49 income-only patch:
+   - future paychecks
+   - unpaid fixed bills / credit-card minimums / loan payments
+   - probability-based variable spending reserve
+   - remaining planned sinking-fund contributions
+   This patch only overrides cashflowRows() and renderCashflow().
+*/
+(function(){
+  function n50(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
+  function abs50(v){ return Math.abs(n50(v)); }
+  function month50(){ return String((app && app.month) || new Date().toISOString().slice(0,7)).slice(0,7); }
+  function normalizeDate50(value){
+    if(value === undefined || value === null || value === '') return '';
+    if(typeof value === 'number'){
+      const d = new Date(Math.round((value - 25569) * 86400 * 1000));
+      if(!Number.isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    }
+    const raw = String(value).trim();
+    let m = raw.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+    m = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+    if(m){ const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`; }
+    const d = new Date(raw);
+    if(!Number.isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    return raw.slice(0,10);
+  }
+  function today50(){ return normalizeDate50((app && app.today) || new Date().toISOString().slice(0,10)); }
+  function dateFromDue50(due){ return `${month50()}-${String(due || 1).padStart(2,'0')}`; }
+  function isSchwab50(t){ return String(t.source || t.account || '').toLowerCase().includes('schwab'); }
+  function inMonth50(t){ return String(normalizeDate50(t.date || t.posted || '')).slice(0,7) === month50(); }
+  function startingBalance50(){
+    try { if(typeof latestSchwabBalanceStable === 'function') return n50(latestSchwabBalanceStable()); } catch(e) {}
+    try { if(typeof currentCheckingBalanceV21 === 'function') return n50(currentCheckingBalanceV21()); } catch(e) {}
+    try { if(typeof currentCheckingBalance === 'function') return n50(currentCheckingBalance()); } catch(e) {}
+    const rows = (app.transactions || [])
+      .map((t,i)=>({t,i,date:normalizeDate50(t.date || t.posted || '')}))
+      .filter(o=>isSchwab50(o.t) && o.t.runningBalance !== undefined && o.t.runningBalance !== null && o.t.runningBalance !== '')
+      .sort((a,b)=>(b.date + '|' + String(b.i).padStart(6,'0')).localeCompare(a.date + '|' + String(a.i).padStart(6,'0')));
+    if(rows.length) return n50(rows[0].t.runningBalance);
+    return n50(app.latestSchwabBalance);
+  }
+  function normalizedPaychecks50(){
+    const byName = new Map();
+    try { (initialData.paychecks || []).forEach(p=>{ if(p && p.name) byName.set(String(p.name), {...p, date:normalizeDate50(p.date), amount:n50(p.amount)}); }); } catch(e) {}
+    (app.paychecks || []).forEach(p=>{
+      const name = String(p?.name || p?.type || p?.label || '').trim();
+      if(!name) return;
+      const fallback = byName.get(name) || {};
+      byName.set(name, {...fallback, ...p, name, date:normalizeDate50(p.date || p.payDate || p.paymentDate || fallback.date), amount:n50(p.amount || fallback.amount)});
+    });
+    return [...byName.values()].filter(p=>p.name && p.date && p.amount).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  }
+  function realDepositExistsForPaycheck50(p){
+    const target = abs50(p.amount);
+    if(!target) return false;
+    return (app.transactions || []).some(t=>{
+      const amt = n50(t.amount);
+      if(amt <= 0 || !isSchwab50(t) || !inMonth50(t)) return false;
+      return Math.abs(abs50(amt) - target) <= 1.00;
+    });
+  }
+  function futurePaycheckEvents50(){
+    const tdy = today50();
+    return normalizedPaychecks50()
+      .filter(p=>p.date >= tdy && !realDepositExistsForPaycheck50(p))
+      .map(p=>({date:p.date, name:p.name, amount:n50(p.amount), type:'Income', priority:0}));
+  }
+  const VARIABLE_NAMES_50 = new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']);
+  function paidFor50(x){ try { if(typeof paidForScheduled === 'function') return n50(paidForScheduled(x)); } catch(e) {} return 0; }
+  function fixedScheduledEvents50(){
+    const items=[];
+    (app.bills || []).forEach(b=>{ if(!VARIABLE_NAMES_50.has(b.name)) items.push({kind:'bill', name:b.name, amount:n50(b.amount), due:b.due, bucket:'Bills'}); });
+    (app.creditCards || []).forEach(c=>items.push({kind:'card', name:c.name, amount:n50(c.min), due:c.due, bucket:'Credit Cards'}));
+    (app.loans || []).forEach(l=>items.push({kind:'loan', name:l.name, amount:n50(l.min), due:l.due, bucket:'Loans'}));
+    return items.map(x=>{
+      const paid = paidFor50(x);
+      return {...x, paid, left:Math.max(0, n50(x.amount)-paid), date:dateFromDue50(x.due)};
+    }).filter(x=>x.left > 0.009 && x.date >= today50()).map(x=>({date:x.date, name:`${x.name} (${x.bucket})`, amount:-x.left, type:x.bucket, priority:1}));
+  }
+  function txSpend50(cat){
+    try { if(typeof txSpendByCategory === 'function') return n50(txSpendByCategory(cat)); } catch(e) {}
+    return 0;
+  }
+  function combinedBudgetRows50(){
+    const rows=[];
+    (app.spendingBudgets || []).forEach(b=>rows.push({name:b.name, budget:n50(b.budget)}));
+    (app.bills || []).forEach(b=>{ if(VARIABLE_NAMES_50.has(b.name) && !rows.some(r=>r.name===b.name)) rows.push({name:b.name, budget:n50(b.amount)}); });
+    return rows;
+  }
+  function reserveWeight50(name){
+    if(['Groceries','Dog Food','Auto Fuel & Maintenance','Services','House Cleaning','Household Consumables'].includes(name)) return 1;
+    if(['Basic Health & Personal Care','Kids Miscellaneous','Kids Experiences','Date Nights','Alcohol & Entertainment','Household Miscellaneous'].includes(name)) return 0.65;
+    return 0;
+  }
+  function remainingFridays50(){
+    const out=[]; const [y,m]=month50().split('-').map(Number); if(!y || !m) return [today50()];
+    const end = new Date(y, m, 0);
+    const d = new Date(today50() + 'T00:00:00');
+    while(d <= end){ if(d.getDay() === 5) out.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1); }
+    return out.length ? out : [today50()];
+  }
+  function variableReserveEvents50(){
+    const reserves=[];
+    combinedBudgetRows50().forEach(b=>{
+      const weight = reserveWeight50(b.name);
+      if(weight <= 0) return;
+      const left = Math.max(0, n50(b.budget) - txSpend50(b.name));
+      const reserve = left * weight;
+      if(reserve > 0.009) reserves.push({name:b.name, amount:reserve});
+    });
+    const total = reserves.reduce((a,x)=>a+x.amount,0);
+    if(total <= 0) return [];
+    const fridays = remainingFridays50();
+    const per = total / fridays.length;
+    return fridays.map((date,idx)=>({date, name:'Variable spending reserve (probability-based)', amount:-(idx===fridays.length-1 ? total - per*(fridays.length-1) : per), type:'Reserve', priority:2}));
+  }
+  function splitContribution50(fundName){
+    return (app.transactions || []).filter(t=>inMonth50(t)).reduce((total,t)=>{
+      const splits = Array.isArray(t.splits) ? t.splits : [];
+      if(splits.length){
+        return total + splits.filter(s=>s.category===fundName && s.treatment==='Sinking Fund Contribution').reduce((a,s)=>a+abs50(s.amount),0);
+      }
+      const tr = t.treatment || t.type || 'Auto';
+      if(t.category === fundName && tr === 'Sinking Fund Contribution') return total + abs50(t.amount);
+      return total;
+    },0);
+  }
+  function remainingSinkingContribution50(f){
+    if(!f || String(f.name || '').trim() === 'Debt Payoff') return 0;
+    const already = n50(f.saved) + splitContribution50(f.name);
+    return Math.max(0, n50(f.budget) - already);
+  }
+  function sinkingFundContributionEvents50(){
+    const remainingFunds = (app.sinkingFunds || [])
+      .map(f=>({name:f.name, amount:remainingSinkingContribution50(f)}))
+      .filter(f=>f.amount > 0.009);
+    if(!remainingFunds.length) return [];
+
+    const payDates = futurePaycheckEvents50().map(e=>e.date).filter(d=>d>=today50());
+    const dates = payDates.length ? payDates : [remainingFridays50()[0] || today50()];
+    const events=[];
+    remainingFunds.forEach(f=>{
+      const per = f.amount / dates.length;
+      dates.forEach((date,idx)=>{
+        const amount = idx===dates.length-1 ? f.amount - per*(dates.length-1) : per;
+        if(amount > 0.009) events.push({date, name:`${f.name} sinking fund contribution`, amount:-amount, type:'Sinking Fund', priority:3});
+      });
+    });
+    return events;
+  }
+  function allCashflowEvents50(){
+    return [
+      ...futurePaycheckEvents50(),
+      ...fixedScheduledEvents50(),
+      ...variableReserveEvents50(),
+      ...sinkingFundContributionEvents50()
+    ].filter(e=>e.date && e.date >= today50() && n50(e.amount)!==0)
+     .sort((a,b)=>String(a.date).localeCompare(String(b.date)) || n50(a.priority)-n50(b.priority) || String(a.name).localeCompare(String(b.name)));
+  }
+
+  window.cashflowRows = function(){
+    let bal = startingBalance50();
+    const rows = [[today50(), 'Latest Schwab/current checking balance', 0, bal, 'Start']];
+    allCashflowEvents50().forEach(e=>{
+      bal += n50(e.amount);
+      rows.push([e.date, e.name, e.amount, bal, bal < 0 ? 'Negative' : bal < 2500 ? 'Low' : 'OK']);
+    });
+    return rows;
+  };
+
+  window.renderCashflow = function(){
+    const table=document.getElementById('cashflowTable');
+    if(!table) return;
+    const variableReserveTotal = variableReserveEvents50().reduce((a,e)=>a+abs50(e.amount),0);
+    const sinkingContributionTotal = sinkingFundContributionEvents50().reduce((a,e)=>a+abs50(e.amount),0);
+    table.innerHTML = `<tr><th colspan="5">Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve + planned sinking-fund contributions. Remaining variable reserve: ${money(variableReserveTotal)} | Remaining sinking-fund contributions: ${money(sinkingContributionTotal)}</th></tr>` +
+      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>' +
+      cashflowRows().map(r=>{ const cls=r[4]==='Negative'?'bad':r[4]==='Low'?'warn':'ok'; return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`; }).join('');
+  };
+
+  try { renderCashflow(); } catch(e) { console.warn('v50 full cashflow repair render skipped', e); }
+})();
+</script>
