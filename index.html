@@ -38,8 +38,20 @@ body.loading main{opacity:1!important;pointer-events:auto!important}
 @keyframes v28pulse{0%{background-position:200% 0}100%{background-position:-200% 0}}
 </style>
 
+
+<style>
+/* v45: prevent stale embedded data flash before live Sheet load */
+body.v45-awaiting-sheet #topMetrics,
+body.v45-awaiting-sheet #katyView,
+body.v45-awaiting-sheet #joeView,
+body.v45-awaiting-sheet #remainingTable,
+body.v45-awaiting-sheet #sinkingPositionTable,
+body.v45-awaiting-sheet #upcomingTable,
+body.v45-awaiting-sheet #confirmedTable { visibility:hidden; }
+body.v45-awaiting-sheet #daily .section::after { content:"Loading live Google Sheet data…"; color:#667085; font-size:13px; }
+</style>
 </head>
-<body>
+<body class="v45-awaiting-sheet">
 <header><h1>Fairman Family Budget Dashboard</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 
 </div>
@@ -2984,704 +2996,547 @@ button.tiny-btn {
 
 
 <script>
-/* ===== v36 stable repair from v15 baseline =====
-   Stop patch drift by overriding only the final calculation/render/save paths.
-   Fixes:
-   - checking balance includes same-day newer Schwab rows without running balance
-   - cards/loans/bills paid status calculated from transactions, not stale sheet flags
-   - cashflow uses those calculated paid amounts
-   - CSV import button listener stays attached
-   - split values are preserved for saveAll
+/* ===== v30: Checking Now must trust latest Schwab running balance =====
+   Fixes the Apple Card $2,000 payment being added back into checking.
+   Also removes duplicated top metric rows caused by layered patches.
 */
 (function(){
-  const V36_MIN_BUFFER = 2500;
-  function n(v){ const x=Number(String(v??'').replace(/[$,]/g,'')); return Number.isFinite(x)?x:0; }
-  function abs(v){ return Math.abs(n(v)); }
-  function month(){ return String(app?.month || '').trim(); }
-  function inMonth(t){ return String(t?.date || '').slice(0,7) === month(); }
-  window.inBudgetMonth = inMonth;
-  window.currentMonthTxV21 = inMonth;
-  function desc(t){ return String((t?.rawDescription||'')+' '+(t?.description||'')).toUpperCase(); }
-  function isSchwab(t){ return String((t?.source||'')+' '+(t?.account||'')).toLowerCase().includes('schwab'); }
-  function treatment(t){ return t?.treatment || t?.type || 'Auto'; }
-  function splits(t){ return Array.isArray(t?.splits) ? t.splits : []; }
-  function latestSchwabInfo(){
-    const tx=(app.transactions||[]).map((t,i)=>({t,i})).filter(x=>inMonth(x.t)&&isSchwab(x.t));
-    // choose the newest Schwab row with a real runningBalance
-    const withRb=tx.filter(x=>x.t.runningBalance!==undefined && x.t.runningBalance!==null && x.t.runningBalance!=='' && !Number.isNaN(Number(x.t.runningBalance)));
-    if(!withRb.length) return {balance:n(app.latestSchwabBalance), base:null, applied:[]};
-    withRb.sort((a,b)=>{
-      const d=String(b.t.date||'').localeCompare(String(a.t.date||'')); if(d) return d;
-      const p=String(b.t.posted||'').localeCompare(String(a.t.posted||'')); if(p) return p;
-      // imported bank files usually show newest same-day rows first; lower index is later/currenter in the dashboard view
-      return a.i-b.i;
-    });
-    const base=withRb[0];
-    let balance=n(base.t.runningBalance);
-    // Apply same-day or later Schwab transactions that appear before the latest running-balance row and have no running balance.
-    // This fixes cases like Chase autopay appearing above the Lowes running-balance row on 2026-06-08.
-    const applied=[];
-    tx.forEach(x=>{
-      const hasRb=x.t.runningBalance!==undefined && x.t.runningBalance!==null && x.t.runningBalance!=='' && !Number.isNaN(Number(x.t.runningBalance));
-      if(hasRb) return;
-      const newerDate=String(x.t.date||'') > String(base.t.date||'');
-      const sameDateNewer=String(x.t.date||'') === String(base.t.date||'') && x.i < base.i;
-      if(newerDate || sameDateNewer){ balance += n(x.t.amount); applied.push(x.t); }
-    });
-    return {balance, base:base.t, applied};
+  function currentMonthV30(t){
+    if(!t) return false;
+    if(typeof currentMonthTxV21 === 'function') return currentMonthTxV21(t);
+    if(typeof inBudgetMonth === 'function') return inBudgetMonth(t);
+    return String(t.date||'').slice(0,7) === app.month;
   }
-  window.currentCheckingBalance = function(){ const info=latestSchwabInfo(); app.latestSchwabBalance=info.balance; return info.balance; };
-  window.currentCheckingBalanceV21 = window.currentCheckingBalance;
 
-  function isAppleCardLike(t){ const s=String((t?.source||'')+' '+(t?.account||'')).toLowerCase(); return s.includes('apple') || (s.includes('card') && !s.includes('schwab')); }
-  function variableNecessities(){ return new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']); }
-  function isBudget(cat){ return (app.spendingBudgets||[]).some(b=>b.name===cat); }
-  function isFund(cat){ return (app.sinkingFunds||[]).some(f=>f.name===cat); }
-  function tracked(cat){ return isBudget(cat)||isFund(cat)||variableNecessities().has(String(cat||'')); }
-  function spendFrom(t, amount, tr){
-    amount=n(amount);
-    if(['Ignore / Transfer','Income','Sinking Fund Contribution','Debt Payment','Loan Payment'].includes(tr)) return 0;
-    if(tr==='Reimbursement / Credit') return -Math.abs(amount);
-    if(tr==='Expense' || tr==='Debt Payoff Extra') return Math.abs(amount);
-    if(isAppleCardLike(t)) return amount>0 ? amount : 0;
-    return amount<0 ? Math.abs(amount) : -Math.abs(amount);
-  }
-  window.transactionSpendAmount=function(t){
-    if(!inMonth(t)) return 0;
-    if(splits(t).length) return splits(t).reduce((a,s)=>a+(tracked(s.category)?spendFrom(t,s.amount,s.treatment||'Auto'):0),0);
-    if(!tracked(t.category)) return 0;
-    return spendFrom(t,t.amount,treatment(t));
-  };
-  window.txSpendByCategory=function(cat){
-    return (app.transactions||[]).filter(inMonth).reduce((a,t)=>{
-      if(splits(t).length) return a + splits(t).filter(s=>s.category===cat).reduce((x,s)=>x+(tracked(s.category)?spendFrom(t,s.amount,s.treatment||'Auto'):0),0);
-      return a + (t.category===cat ? transactionSpendAmount(t) : 0);
-    },0);
-  };
-
-  function keywordList(item){
-    const name=String(item.name||'').toUpperCase();
-    let keys=(item.paymentKeywords||[]).slice();
-    if(name.includes('APPLE CARD')) keys=keys.concat(['APPLECARD GSBANK','APPLECARD','APPLE CARD']);
-    if(name.includes('BEST BUY')) keys=keys.concat(['BEST BUY']);
-    if(name.includes('LOWES')) keys=keys.concat(['LOWES','LOWE']);
-    if(name.includes('CHASE')||name.includes('AMAZON PRIME')) keys=keys.concat(['CHASE CREDIT CRD','CHASE CREDIT','AMAZON PRIME VISA','CHASE']);
-    if(name.includes('U.S. BANK')||name.includes('US BANK')) keys=keys.concat(['U.S. BANK','US BANK']);
-    if(name.includes('MORTGAGE')||name.includes('NAVY FEDERAL')) keys=keys.concat(['NFCU MORT DEBIT','NAVY FEDERAL']);
-    if(name.includes('HELOC')) keys=keys.concat(['NFCU MORT DEBIT','HELOC']);
-    if(name.includes('BRIDGECREST')) keys=keys.concat(['BRIDGECREST']);
-    if(name.includes('WELLS FARGO')) keys=keys.concat(['WELLS FARGO']);
-    return [...new Set(keys.map(k=>String(k).toUpperCase().trim()).filter(k=>k.length>=4))];
-  }
-  function paymentTxs(kind){
-    return (app.transactions||[]).filter(t=>{
-      if(!inMonth(t)) return false;
-      const cat=String(t.category||''), tr=treatment(t), d=desc(t);
-      if(kind==='card') return cat==='Debt Payment'||tr==='Debt Payment'||/(AUTOPAY|AUTO PYMT|PAYMENT|PYMT|APPLECARD|CHASE CREDIT CRD|BEST BUY|LOWES)/.test(d);
-      if(kind==='loan') return cat==='Loan Payment'||tr==='Loan Payment'||/(NFCU MORT|BRIDGECREST|WELLS FARGO|APPLE WATCH)/.test(d);
-      if(kind==='bill') return true;
-      return false;
-    });
-  }
-  function paidMapFor(items, kind){
-    const out={}; (items||[]).forEach(i=>out[i.name]=0);
-    paymentTxs(kind).forEach(t=>{
-      const amount=abs(t.amount); if(!amount) return;
-      const d=desc(t);
-      const matches=(items||[]).filter(item=>keywordList(item).some(k=>d.includes(k)));
-      if(!matches.length) return;
-      let winner=matches[0], best=Math.abs(amount-n(matches[0].expected||matches[0].min||matches[0].amount));
-      matches.forEach(item=>{ const diff=Math.abs(amount-n(item.expected||item.min||item.amount)); if(diff<best){winner=item; best=diff;} });
-      out[winner.name]=(out[winner.name]||0)+amount;
-    });
-    return out;
-  }
-  function paidBillsMap(){
-    const out={}; (app.bills||[]).forEach(b=>out[b.name]=0);
-    (app.transactions||[]).filter(t=>inMonth(t)).forEach(t=>{
-      const d=desc(t), amount=abs(t.amount); if(!amount) return;
-      (app.bills||[]).forEach(b=>{
-        if(variableNecessities().has(b.name)) return;
-        const keys=keywordList(b).length?keywordList(b):[String(b.name||'').toUpperCase()];
-        if(keys.some(k=>d.includes(k))) out[b.name]=(out[b.name]||0)+amount;
+  function latestSchwabTransactionV30(){
+    const schwab = (app.transactions || [])
+      .filter(t => {
+        const src = String(t.source || '').toLowerCase();
+        const acct = String(t.account || '').toLowerCase();
+        return (src.includes('schwab') || acct.includes('schwab')) &&
+               t.runningBalance !== undefined &&
+               t.runningBalance !== null &&
+               t.runningBalance !== '' &&
+               !isNaN(Number(t.runningBalance));
+      })
+      .sort((a,b) => {
+        const dateCompare = String(b.date||'').localeCompare(String(a.date||''));
+        if(dateCompare !== 0) return dateCompare;
+        const postedCompare = String(b.posted||'').localeCompare(String(a.posted||''));
+        if(postedCompare !== 0) return postedCompare;
+        return String(b.id||'').localeCompare(String(a.id||''));
       });
-    });
-    return out;
+
+    return schwab[0] || null;
   }
-  window.paidCardsV36=function(){ return paidMapFor(app.creditCards||[], 'card'); };
-  window.paidLoansV36=function(){ return paidMapFor(app.loans||[], 'loan'); };
-  window.paidBillsV36=function(){ return paidBillsMap(); };
-  window.paidForScheduled=function(x){
-    if(x.kind==='card') return paidCardsV36()[x.name]||0;
-    if(x.kind==='loan') return paidLoansV36()[x.name]||0;
-    if(x.kind==='bill') return paidBillsV36()[x.name]||0;
+
+  window.checkingNowV30 = function(){
+    const latest = latestSchwabTransactionV30();
+    if(latest) return Number(latest.runningBalance) || 0;
+    if(app.latestSchwabBalance !== undefined && app.latestSchwabBalance !== null && app.latestSchwabBalance !== '') {
+      return Number(app.latestSchwabBalance) || 0;
+    }
     return 0;
   };
-  function paycheckReceived(p){
-    if(p.received===true || String(p.received).toLowerCase()==='true') return true;
-    return (app.transactions||[]).some(t=>inMonth(t)&&isSchwab(t)&&n(t.amount)>0&&Math.abs(abs(t.amount)-abs(p.amount))<1.00);
+
+  function latestSchwabLabelV30(){
+    const latest = latestSchwabTransactionV30();
+    if(!latest) return '—';
+    return `${esc(latest.date)}<div class="tiny">${esc(latest.description || latest.rawDescription || '')}</div>`;
   }
-  window.paycheckReceived = paycheckReceived;
-  window.paycheckIsReceivedV20 = paycheckReceived;
-  window.receivedPaycheckV21 = paycheckReceived;
-  function debtExtra(){ const paid=paidCardsV36(); return (app.creditCards||[]).reduce((a,c)=>a+Math.max(0,(paid[c.name]||0)-n(c.min)),0); }
-  window.extraDebtPaidThisMonth = debtExtra;
-  window.extraDebtPayoffV21 = debtExtra;
-  window.debtPayoffExtraFromSplitsV29 = debtExtra;
-  window.sinkingFundContributionAmount=function(name){
-    if(String(name||'').trim()==='Debt Payoff') return debtExtra();
-    return (app.transactions||[]).filter(t=>inMonth(t)).reduce((a,t)=>{
-      if(splits(t).length) return a+splits(t).filter(s=>s.category===name&&s.treatment==='Sinking Fund Contribution').reduce((x,s)=>x+abs(s.amount),0);
-      return a+(t.category===name && treatment(t)==='Sinking Fund Contribution'?abs(t.amount):0);
-    },0);
-  };
-  window.sinkingFundPosition=function(f){
-    if(String(f.name||'').trim()==='Debt Payoff') return debtExtra()-n(f.budget);
-    return n(f.balance)+n(f.saved)+sinkingFundContributionAmount(f.name)-txSpendByCategory(f.name);
-  };
-  window.cashflowRows=function(){
-    let bal=currentCheckingBalance(); const rows=[[today(),'Latest Schwab/current checking balance',0,bal,'Start']]; const events=[];
-    (app.paychecks||[]).forEach(p=>{ if(p.date>=today()&&!paycheckReceived(p)) events.push({date:p.date,name:p.name,amount:n(p.amount)}); });
-    unpaidScheduledFuture().forEach(x=>events.push({date:x.date,name:x.name+' ('+x.bucket+')',amount:-n(x.left)}));
-    events.sort((a,b)=>a.date.localeCompare(b.date));
-    events.forEach(e=>{bal+=n(e.amount); rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<V36_MIN_BUFFER?'Low':'OK']);});
-    return rows;
+
+  function monthlySpendLeftV30(){
+    const totalBudget = sum(app.spendingBudgets || [], b=>Number(b.budget)||0);
+    const spent = sum(app.spendingBudgets || [], b=>txSpendByCategory(b.name));
+    return totalBudget - spent;
+  }
+
+  function sinkingNetV30(){
+    return sum(app.sinkingFunds || [], f=>{
+      if(f.name === 'Debt Payoff' && typeof debtPayoffExtraFromSplitsV29 === 'function'){
+        return debtPayoffExtraFromSplitsV29() - (Number(f.budget)||0);
+      }
+      const spent = txSpendByCategory(f.name);
+      const saved = Number(f.saved)||0;
+      const balance = Number(f.balance)||0;
+      let contributed = 0;
+      if(typeof sinkingContributionV29 === 'function') contributed = sinkingContributionV29(f.name);
+      return balance + saved + contributed - spent;
+    });
+  }
+
+  function needsReviewV30(){
+    return (app.transactions || []).filter(t=>currentMonthV30(t) && String(t.category||'') === 'Needs Review').length;
+  }
+
+  function currentMonthTxCountV30(){
+    return (app.transactions || []).filter(t=>currentMonthV30(t)).length;
+  }
+
+  function renderTopMetricsV30(){
+    const checking = checkingNowV30();
+    const spendLeft = monthlySpendLeftV30();
+    const sink = sinkingNetV30();
+    const needs = needsReviewV30();
+    const top = document.getElementById('topMetrics');
+    if(!top) return;
+
+    top.dataset.loaded = 'true';
+    top.innerHTML = [
+      ['Checking now', money(checking), checking < 2500 ? 'warn' : 'ok'],
+      ['Monthly spend left', money(spendLeft), spendLeft < 0 ? 'bad' : spendLeft < 400 ? 'warn' : 'ok'],
+      ['Sinking fund net', money(sink), sink < 0 ? 'bad' : 'ok'],
+      ['Needs review', needs, needs ? 'warn' : 'ok'],
+      ['Sheet sync', 'Connected', 'ok'],
+      ['Budget month', app.month || '—', ''],
+      ['Current-month tx', currentMonthTxCountV30(), ''],
+      ['Latest Schwab balance row', latestSchwabLabelV30(), '']
+    ].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]||''}">${m[1]}</div></div>`).join('');
+  }
+
+  if(typeof cashflowRows === 'function'){
+    const oldCashflowRowsV30 = cashflowRows;
+    window.cashflowRows = function(){
+      const rows = oldCashflowRowsV30();
+      if(!rows || !rows.length) return rows;
+      const realChecking = checkingNowV30();
+      const latest = latestSchwabTransactionV30();
+      rows[0][0] = latest ? latest.date : (app.today || rows[0][0]);
+      rows[0][1] = 'Latest Schwab running balance';
+      rows[0][2] = 0;
+      rows[0][3] = realChecking;
+      rows[0][4] = 'Start';
+
+      let bal = realChecking;
+      for(let i=1;i<rows.length;i++){
+        bal += Number(rows[i][2]) || 0;
+        rows[i][3] = bal;
+        rows[i][4] = bal < 0 ? 'Negative' : bal < 2500 ? 'Low' : 'OK';
+      }
+      return rows;
+    };
+  }
+
+  const oldRenderDailyV30 = window.renderDaily;
+  window.renderDaily = function(){
+    if(typeof oldRenderDailyV30 === 'function') oldRenderDailyV30.apply(this, arguments);
+    renderTopMetricsV30();
   };
 
-  function effectiveBudgets(){
-    const rows=(app.spendingBudgets||[]).map(b=>({name:b.name,friendly:b.friendly||b.name,budget:n(b.budget)}));
-    (app.bills||[]).forEach(b=>{ if(variableNecessities().has(b.name)&&!rows.some(r=>r.name===b.name)) rows.push({name:b.name,friendly:b.name,budget:n(b.amount)}); });
-    return rows;
+  try {
+    if(typeof render === 'function' && window.app) render();
+    else renderTopMetricsV30();
+  } catch(e) {
+    console.warn('v30 render skipped', e);
+    renderTopMetricsV30();
   }
-  function renderTop(){
-    const budgets=effectiveBudgets(); const total=budgets.reduce((a,b)=>a+n(b.budget),0); const spent=budgets.reduce((a,b)=>a+txSpendByCategory(b.name),0); const left=total-spent;
-    const sink=(app.sinkingFunds||[]).reduce((a,f)=>a+sinkingFundPosition(f),0); const needs=(app.transactions||[]).filter(t=>inMonth(t)&&t.category==='Needs Review').length; const info=latestSchwabInfo(); const checking=currentCheckingBalance();
-    const top=document.getElementById('topMetrics'); if(!top) return;
-    top.innerHTML=[['Checking now',money(checking),checking<V36_MIN_BUFFER?'warn':'ok'],['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],['Sinking fund net',money(sink),sink<0?'bad':'ok'],['Needs review',needs,needs?'warn':'ok'],['Sheet sync',getApiUrl&&getApiUrl()?'Connected':'No API URL',getApiUrl&&getApiUrl()?'ok':'warn'],['Budget month',esc(app.month||'—'),''],['Current-month tx',(app.transactions||[]).filter(inMonth).length,''],['Latest Schwab balance row',info.base?`${esc(info.base.date)}<div class="tiny">${esc(info.base.description||'')}</div>`:'—','']].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]||''}">${m[1]}</div></div>`).join('');
-    document.querySelectorAll('#dataHealthV23').forEach(e=>e.remove());
-  }
-  function showDecision(t, owner){
-    if(!inMonth(t) || (t.owner||'')!==owner) return false;
-    const cat=String(t.category||''), tr=treatment(t);
-    if(['Income','Debt Payment','Loan Payment','Payment / Transfer','Transfer','Debt Payoff'].includes(cat)) return false;
-    if(['Income','Ignore / Transfer','Debt Payment','Loan Payment','Debt Payoff Extra','Sinking Fund Contribution','Reimbursement / Credit'].includes(tr)) return false;
-    if((app.bills||[]).some(b=>b.name===cat)&&!variableNecessities().has(cat)) return false;
-    return transactionSpendAmount(t)>0;
-  }
-  window.renderPersonalView=function(owner,id,budgetName){
-    const budget=n((app.spendingBudgets||[]).find(b=>b.name===budgetName)?.budget); const spent=txSpendByCategory(budgetName); const rem=budget-spent; const tx=(app.transactions||[]).filter(t=>showDecision(t,owner)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,12);
-    const el=document.getElementById(id); if(!el) return;
-    el.innerHTML=`<div class="metrics" style="grid-template-columns:1fr 1fr"><div class="metric"><div class="label">${owner} personal left</div><div class="value ${rem<0?'bad':rem<50?'warn':'ok'}">${money(rem)}</div></div><div class="metric"><div class="label">${owner} personal spent</div><div class="value">${money(spent)}</div></div></div><h3>${owner} Spending Decisions</h3><table><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Budget Impact</th></tr>${tx.map(t=>`<tr><td>${esc(t.date)}</td><td>${esc(t.description)}${t.purchasedBy?`<div class="tiny">${esc(t.purchasedBy)}</div>`:''}</td><td>${esc(t.category)}</td><td class="num">${money(transactionSpendAmount(t))}</td></tr>`).join('')||'<tr><td colspan="4">None yet.</td></tr>'}</table>`;
-  };
-  const prevRenderDaily=window.renderDaily;
-  window.renderDaily=function(){
-    if(typeof prevRenderDaily==='function') { try{ prevRenderDaily(); }catch(e){ console.warn('old renderDaily failed',e); } }
-    renderTop();
-    renderPersonalView('Katy','katyView','Katy - Individual Priorities'); renderPersonalView('Joe','joeView','Joe - Individual Priorities');
-    const budgets=effectiveBudgets(); let rows='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th><th>Progress</th></tr>';
-    budgets.forEach(b=>{const spent=txSpendByCategory(b.name), rem=n(b.budget)-spent, pct=b.budget?Math.max(0,Math.min(100,Math.round(spent/b.budget*100))):0, cls=rem<0?'bad':pct>80?'warn':''; rows+=`<tr><td>${esc(b.friendly||b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${rem<0?'bad':''}">${money(rem)}</td><td><div class="progress"><div class="bar ${cls}" style="width:${pct}%"></div></div><div class="tiny">${pct}%</div></td></tr>`});
-    const remTable=document.getElementById('remainingTable'); if(remTable) remTable.innerHTML=rows;
-    const st=document.getElementById('sinkingPositionTable'); if(st) st.innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned</th><th class="num">Actual / Contributed</th><th class="num">Spent</th><th class="num">Position</th></tr>'+(app.sinkingFunds||[]).map(f=>{const actual=sinkingFundContributionAmount(f.name), spent=f.name==='Debt Payoff'?actual:txSpendByCategory(f.name), pos=sinkingFundPosition(f); return `<tr><td>${esc(f.name)}${f.name==='Debt Payoff'?'<div class="tiny">Extra payments above minimums</div>':''}</td><td class="num">${f.name==='Debt Payoff'?'—':money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(actual)}</td><td class="num">${f.name==='Debt Payoff'?'—':money(spent)}</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`}).join('');
-  };
-  window.renderDebts=function(){
-    const pc=paidCardsV36(), pl=paidLoansV36(), pb=paidBillsV36();
-    document.getElementById('ccTable').innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Min</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+(app.creditCards||[]).map(c=>`<tr><td>${esc(c.name)}</td><td class="num">${money(abs(c.owed))}</td><td class="num">${money(c.min)}</td><td class="num">${money(pc[c.name]||0)}</td><td>${esc(c.due)}</td><td class="num">${Number(c.apr||0).toFixed(2)}%</td></tr>`).join('');
-    document.getElementById('loanTable').innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Payment</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+(app.loans||[]).map(l=>`<tr><td>${esc(l.name)}</td><td class="num">${money(abs(l.owed))}</td><td class="num">${money(l.min)}</td><td class="num">${money(pl[l.name]||0)}</td><td>${esc(l.due)}</td><td class="num">${Number(l.apr||0).toFixed(2)}%</td></tr>`).join('');
-    document.getElementById('billTable').innerHTML='<tr><th>Name</th><th class="num">Budget</th><th class="num">Confirmed Paid</th><th>Due</th></tr>'+(app.bills||[]).map(b=>`<tr><td>${esc(b.name)}</td><td class="num">${money(b.amount)}</td><td class="num">${money(pb[b.name]||0)}</td><td>${esc(b.due)}</td></tr>`).join('');
-  };
-  const prevRender=window.render;
-  window.render=function(){ if(typeof prevRender==='function') { try{prevRender();}catch(e){console.warn('old render failed',e);} } renderDaily(); renderCashflow(); renderBudgets(); renderDebts(); document.body.classList.remove('loading'); };
-  // Keep import button alive if previous listeners got clobbered.
-  setTimeout(()=>{ const btn=document.getElementById('importBtn'); if(btn && typeof importCsvFiles==='function'){ btn.onclick=(e)=>{ e.preventDefault(); importCsvFiles(); }; } render(); },0);
 })();
 </script>
 
 
 <script>
-/* ===== v42: Probability-Based Cash Flow Forecast =====
-   - Future paychecks stay in the forecast.
-   - Fixed bills/cards/loans stay on their due dates.
-   - Predictable variable spending is recalculated from remaining monthly budget and spread across remaining Fridays.
-   - Decision/optional spending is forecast at a probability factor.
-   - Irregular/event-based spending is not deducted from checking automatically; it is shown as optional risk.
+/* ===== v31 FINAL TOP METRICS OVERRIDE =====
+   Removes duplicate metric rows and fixes Checking Now.
+   Checking Now = latest current-month Schwab transaction runningBalance.
+   If none exists, fallback to app.latestSchwabBalance.
 */
 (function(){
-  const V42_FULL_RESERVE_CATEGORIES = new Set([
-    'Groceries',
-    'Dog Food',
-    'Auto Fuel & Maintenance',
-    'Basic Health & Personal Care',
-    'Household Consumables',
-    'Household Miscellaneous',
-    'Kids Miscellaneous',
-    'Date Nights',
-    'Alcohol & Entertainment'
-  ]);
-
-  const V42_PARTIAL_RESERVE_PROBABILITY = {
-    'Joe - Individual Priorities': 0.60,
-    'Katy - Individual Priorities': 0.60,
-    'Kids Experiences': 0.60
-  };
-
-  const V42_FIXED_BILL_EXCLUSIONS = new Set([
-    'Groceries',
-    'Dog Food',
-    'Auto Fuel & Maintenance',
-    'Basic Health & Personal Care',
-    'Household Consumables',
-    'Household Miscellaneous',
-    'Kids Miscellaneous',
-    'Date Nights',
-    'Alcohol & Entertainment',
-    'Joe - Individual Priorities',
-    'Katy - Individual Priorities',
-    'Kids Experiences',
-    'House Cleaning',
-    'Services'
-  ]);
-
-  function n(v){
-    const x = Number(String(v ?? '').replace(/[$,]/g,''));
-    return Number.isFinite(x) ? x : 0;
-  }
-  function pad(v){ return String(v).padStart(2,'0'); }
-  function iso(v){
-    if(v === undefined || v === null || v === '') return '';
-    if(typeof v === 'number' && Number.isFinite(v) && v > 30000){
-      const d = new Date(Date.UTC(1899,11,30) + v * 86400000);
-      return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
-    }
-    if(v instanceof Date && !isNaN(v)) return `${v.getFullYear()}-${pad(v.getMonth()+1)}-${pad(v.getDate())}`;
-    const s = String(v).trim();
-    let m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
-    if(m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
-    m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})/);
-    if(m){
-      let y = Number(m[3]); if(y < 100) y += 2000;
-      return `${y}-${pad(m[1])}-${pad(m[2])}`;
-    }
-    const d = new Date(s);
-    if(!isNaN(d)) return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-    return s;
-  }
-  function currentToday(){
-    return iso(typeof today === 'function' ? today() : (app && app.today) || new Date());
-  }
-  function currentMonth(){
-    return String((app && app.month) || currentToday().slice(0,7));
-  }
-  function currentMonthTx(t){
-    return iso(t && t.date).slice(0,7) === currentMonth();
-  }
-  function isSchwab(t){
-    return String(((t && t.source) || '') + ' ' + ((t && t.account) || '')).toLowerCase().includes('schwab');
-  }
-  function txText(t){
-    return String(((t && t.description) || '') + ' ' + ((t && t.rawDescription) || '')).toLowerCase();
-  }
-  function safeMoney(v){
-    return typeof money === 'function' ? money(v) : (Number(v)||0).toLocaleString('en-US',{style:'currency',currency:'USD'});
-  }
-  function safeEsc(v){
-    return typeof esc === 'function' ? esc(v) : String(v ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  function currentMonthV31(t){
+    return String(t && t.date || '').slice(0,7) === String(app.month || '');
   }
 
-  function txOrderKey(t){
-    const idx = (app.transactions || []).indexOf(t);
-    return `${iso(t.date)}|${iso(t.posted || t.date)}|${String(idx).padStart(8,'0')}`;
-  }
-
-  function latestSchwabRunningBalanceTxV42(){
-    // Schwab exports/display order often places the current same-day row ABOVE older same-day rows.
-    // So for date/post ties, lower transaction index is newer/currenter.
-    return (app.transactions || [])
-      .filter(t => currentMonthTx(t) && isSchwab(t) && t.runningBalance !== undefined && t.runningBalance !== null && t.runningBalance !== '' && !Number.isNaN(Number(t.runningBalance)))
+  function latestSchwabTxV31(){
+    const tx = (app.transactions || [])
+      .filter(t => {
+        const src = String(t.source || '').toLowerCase();
+        const acct = String(t.account || '').toLowerCase();
+        return currentMonthV31(t) &&
+          (src.includes('schwab') || acct.includes('schwab')) &&
+          t.runningBalance !== undefined &&
+          t.runningBalance !== null &&
+          t.runningBalance !== '' &&
+          !isNaN(Number(t.runningBalance));
+      })
       .sort((a,b) => {
-        const d = iso(b.date).localeCompare(iso(a.date));
+        const d = String(b.date||'').localeCompare(String(a.date||''));
         if(d) return d;
-        const p = iso(b.posted || b.date).localeCompare(iso(a.posted || a.date));
+        const p = String(b.posted||'').localeCompare(String(a.posted||''));
         if(p) return p;
-        return (app.transactions || []).indexOf(a) - (app.transactions || []).indexOf(b);
-      })[0] || null;
+        return String(b.id||'').localeCompare(String(a.id||''));
+      });
+    return tx[0] || null;
   }
 
-  function currentCheckingV42(){
-    const latest = latestSchwabRunningBalanceTxV42();
-    const sheetBalance = n(app.latestSchwabBalance);
-
-    if(latest){
-      const latestDate = iso(latest.date);
-      const latestPosted = iso(latest.posted || latest.date);
-      const latestIndex = (app.transactions || []).indexOf(latest);
-      let bal = n(latest.runningBalance);
-
-      // Apply Schwab transactions that are newer than the latest running-balance row but do not have
-      // their own running balance. This is the bug you hit: Chase autopay was above the latest
-      // running-balance row in the transaction list, but v42 failed to apply it.
-      (app.transactions || [])
-        .map((t,i)=>({t,i}))
-        .filter(x => {
-          const t=x.t;
-          if(!currentMonthTx(t) || !isSchwab(t)) return false;
-          if(t.runningBalance !== undefined && t.runningBalance !== null && t.runningBalance !== '') return false;
-          const d = iso(t.date);
-          const p = iso(t.posted || t.date);
-          if(d > latestDate) return true;
-          if(d === latestDate && p > latestPosted) return true;
-          if(d === latestDate && p === latestPosted && x.i < latestIndex) return true;
-          return false;
-        })
-        .sort((a,b) => {
-          const d=iso(a.t.date).localeCompare(iso(b.t.date)); if(d) return d;
-          const p=iso(a.t.posted || a.t.date).localeCompare(iso(b.t.posted || b.t.date)); if(p) return p;
-          return b.i - a.i; // apply older-to-newer when list order is newest-first
-        })
-        .forEach(x => { bal += n(x.t.amount); });
-
-      // If the Sheet already gives a current balance that differs from the transaction-derived balance,
-      // trust the Sheet value only when it is lower by an exact newer withdrawal amount. This prevents
-      // old embedded balances from overriding real running-balance math, while fixing the missing-autopay case.
-      if(sheetBalance && Math.abs(sheetBalance - bal) > 0.009){
-        const diff = Math.abs(sheetBalance - bal);
-        const hasMatchingNewerWithdrawal = (app.transactions || []).some((t,i) =>
-          currentMonthTx(t) && isSchwab(t) && i < latestIndex && Math.abs(Math.abs(n(t.amount)) - diff) < 0.02
-        );
-        if(hasMatchingNewerWithdrawal) return sheetBalance;
-      }
-
-      app.latestSchwabBalance = bal;
-      return bal;
-    }
-
-    return sheetBalance;
+  function checkingNowV31(){
+    const latest = latestSchwabTxV31();
+    if(latest) return Number(latest.runningBalance) || 0;
+    return Number(app.latestSchwabBalance) || 0;
   }
 
-  function originalPaychecksV42(){
-    try {
-      const raw = JSON.parse(document.getElementById('initialData')?.textContent || '{}');
-      return Array.isArray(raw.paychecks) ? raw.paychecks : [];
-    } catch(e) {
-      return [];
-    }
+  function monthlySpendLeftV31(){
+    const budgets = app.spendingBudgets || [];
+    const total = sum(budgets, b => Number(b.budget)||0);
+    const spent = sum(budgets, b => typeof txSpendByCategory === 'function' ? txSpendByCategory(b.name) : 0);
+    return total - spent;
   }
 
-  function paycheckListV42(){
-    const sheet = Array.isArray(app.paychecks) ? app.paychecks : [];
-    const embedded = originalPaychecksV42();
-    const normalize = p => ({
-      raw: p,
-      date: iso(p.date || p.payDate || p.paymentDate),
-      name: p.name || p.description || p.person || 'Paycheck',
-      amount: n(p.amount || p.Amount)
-    });
-    const sheetClean = sheet.map(normalize).filter(p => p.date && p.date.slice(0,7) === currentMonth() && p.amount > 0);
-    const embedClean = embedded.map(normalize).filter(p => p.date && p.date.slice(0,7) === currentMonth() && p.amount > 0);
-    const source = sheetClean.length ? sheetClean : embedClean;
-    const seen = new Set();
-    return source.filter(p => {
-      const key = `${p.date}|${Math.round(p.amount * 100)}|${String(p.name).toLowerCase()}`;
-      if(seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
-
-  function paycheckPostedV42(p){
-    const pDate = iso(p.date || p.raw?.date);
-    const today = currentToday();
-    if(!pDate || pDate > today) return false;
-    const target = Math.abs(n(p.amount || p.raw?.amount));
-    if(p.raw && (p.raw.received === true || String(p.raw.received).toLowerCase() === 'true')) return true;
-    return (app.transactions || []).some(t => {
-      if(!currentMonthTx(t) || !isSchwab(t)) return false;
-      const amt = n(t.amount);
-      if(amt <= 0) return false;
-      if(Math.abs(Math.abs(amt) - target) > 1.00) return false;
-      return /payroll|direct dep|deposit|marine|max|paycheck|salary/.test(txText(t));
-    });
-  }
-
-  function futurePaycheckEventsV42(){
-    return paycheckListV42()
-      .filter(p => p.date >= currentToday() && !paycheckPostedV42(p))
-      .map(p => ({date:p.date, name:p.name, amount:p.amount, type:'Income'}));
-  }
-
-  function paidScheduledAmountV42(item){
-    try {
-      if(typeof paidForScheduled === 'function') return n(paidForScheduled(item));
-    } catch(e){}
-    if(item.kind === 'bill') return n((app.paidBills || {})[item.name]);
-    if(item.kind === 'card') return n((app.paidCards || {})[item.name]);
-    if(item.kind === 'loan') return n((app.paidLoans || {})[item.name]);
+  function debtPayoffExtraV31(){
+    if(typeof debtPayoffExtraFromSplitsV29 === 'function') return debtPayoffExtraFromSplitsV29();
     return 0;
   }
 
-  function scheduledItemsV42(){
-    const fixedBills = (app.bills || [])
-      .filter(b => !V42_FIXED_BILL_EXCLUSIONS.has(b.name))
-      .map(b => ({kind:'bill', name:b.name, amount:n(b.amount), due:n(b.due || b.day || 1), bucket:'Bills'}));
-
-    const cards = (app.creditCards || [])
-      .map(c => ({kind:'card', name:c.name, amount:n(c.min || c.minimum || c.payment), due:n(c.due || c.dueDay || 1), bucket:'Credit Cards'}));
-
-    const loans = (app.loans || [])
-      .map(l => ({kind:'loan', name:l.name, amount:n(l.min || l.payment || l.amount), due:n(l.due || l.dueDay || 1), bucket:'Loans'}));
-
-    return [...fixedBills, ...cards, ...loans].filter(x => x.amount > 0);
+  function sinkingNetV31(){
+    return sum(app.sinkingFunds || [], f => {
+      if(f.name === 'Debt Payoff') return debtPayoffExtraV31() - (Number(f.budget)||0);
+      const spent = typeof txSpendByCategory === 'function' ? txSpendByCategory(f.name) : 0;
+      const balance = Number(f.balance)||0;
+      const saved = Number(f.saved)||0;
+      let contributed = 0;
+      if(typeof sinkingContributionV29 === 'function') contributed = sinkingContributionV29(f.name);
+      return balance + saved + contributed - spent;
+    });
   }
 
-  function dateFromDayV42(day){
-    return `${currentMonth()}-${pad(Math.max(1, Math.min(31, n(day) || 1)))}`;
+  function needsReviewV31(){
+    return (app.transactions || []).filter(t => currentMonthV31(t) && String(t.category||'') === 'Needs Review').length;
   }
 
-  function fixedScheduledEventsV42(){
-    return scheduledItemsV42()
-      .map(x => {
-        const paid = paidScheduledAmountV42(x);
-        const left = Math.max(0, n(x.amount) - paid);
-        return {...x, paid, left, date: dateFromDayV42(x.due)};
-      })
-      .filter(x => x.left > 0.009 && x.date >= currentToday())
-      .map(x => ({date:x.date, name:`${x.name} (${x.bucket})`, amount:-x.left, type:x.bucket}));
+  function currentMonthCountV31(){
+    return (app.transactions || []).filter(currentMonthV31).length;
   }
 
-  function lastDayOfMonthV42(){
-    const [y,m] = currentMonth().split('-').map(Number);
-    return new Date(y, m, 0);
+  function schwabLabelV31(){
+    const latest = latestSchwabTxV31();
+    if(!latest) return '—';
+    return `${esc(latest.date)}<div class="tiny">${esc(latest.description || latest.rawDescription || '')}</div>`;
   }
 
-  function remainingReserveDatesV42(){
-    const dates = [];
-    const today = new Date(currentToday() + 'T00:00:00');
-    const end = lastDayOfMonthV42();
-    for(let d = new Date(today); d <= end; d.setDate(d.getDate()+1)){
-      // Friday = 5. Use Friday as the weekly planning bucket.
-      if(d.getDay() === 5) dates.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`);
+  function metricV31(label,value,cls){
+    return `<div class="metric"><div class="label">${label}</div><div class="value ${cls||''}">${value}</div></div>`;
+  }
+
+  window.renderTopMetricsV31 = function(){
+    const top = document.getElementById('topMetrics');
+    if(!top) return;
+    const checking = checkingNowV31();
+    const left = monthlySpendLeftV31();
+    const sink = sinkingNetV31();
+    const needs = needsReviewV31();
+
+    top.innerHTML =
+      metricV31('Checking now', money(checking), checking < 2500 ? 'warn' : 'ok') +
+      metricV31('Monthly spend left', money(left), left < 0 ? 'bad' : left < 400 ? 'warn' : 'ok') +
+      metricV31('Sinking fund net', money(sink), sink < 0 ? 'bad' : 'ok') +
+      metricV31('Needs review', needs, needs ? 'warn' : 'ok') +
+      metricV31('Sheet sync', 'Connected', 'ok') +
+      metricV31('Budget month', esc(app.month || '—'), '') +
+      metricV31('Current-month tx', currentMonthCountV31(), '') +
+      metricV31('Latest Schwab balance row', schwabLabelV31(), '');
+    top.dataset.loaded = 'true';
+  };
+
+  const oldRenderDailyV31 = window.renderDaily;
+  window.renderDaily = function(){
+    if(typeof oldRenderDailyV31 === 'function') oldRenderDailyV31.apply(this, arguments);
+    renderTopMetricsV31();
+  };
+
+  const oldRenderV31 = window.render;
+  window.render = function(){
+    if(typeof oldRenderV31 === 'function') oldRenderV31.apply(this, arguments);
+    renderTopMetricsV31();
+  };
+
+  try { renderTopMetricsV31(); } catch(e) { console.warn('v31 metrics skipped', e); }
+})();
+</script>
+
+
+<script>
+/* ===== v45 FULL STABLE PATCH =====
+   Built on the full attached index.html. Does not replace the app.
+   Fixes:
+   - Debt Payoff sinking fund: only explicit Debt Payoff Extra split/tx counts.
+   - No stale initial snapshot/Katy/Joe values while Sheet is loading.
+   - Probability-based cash-flow forecast with correct current checking start.
+   - Cards/loans confirmed paid respect split transactions.
+*/
+(function(){
+  const PATCH='v45';
+  function n(v){ const x=Number(String(v??'').replace(/[$,]/g,'')); return Number.isFinite(x)?x:0; }
+  function abs(v){ return Math.abs(n(v)); }
+  function month(){ return String(app?.month||''); }
+  function todayV(){ return String(app?.today || (typeof today==='function'?today():'')).slice(0,10); }
+  function inMonth(t){ return String(t?.date||'').slice(0,7)===month(); }
+  function txs(){ return Array.isArray(app?.transactions)?app.transactions:[]; }
+  function splits(t){ return Array.isArray(t?.splits)?t.splits:[]; }
+  function tr(t){ return t?.treatment || t?.type || 'Auto'; }
+  function lower(s){ return String(s||'').toLowerCase(); }
+  function upper(s){ return String(s||'').toUpperCase(); }
+  function desc(t){ return upper((t?.rawDescription||'')+' '+(t?.description||'')); }
+  function isSchwab(t){ return lower((t?.source||'')+' '+(t?.account||'')).includes('schwab'); }
+  function key(t,i){ return String(t?.date||'')+'|'+String(t?.posted||'')+'|'+String(i).padStart(6,'0'); }
+  function budgetNames(){ return new Set((app.spendingBudgets||[]).map(b=>b.name)); }
+  function fundNames(){ return new Set((app.sinkingFunds||[]).map(f=>f.name)); }
+  const VARIABLE_NAMES = new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services','Household Consumables','Household Miscellaneous','Kids Miscellaneous','Kids Experiences','Date Nights','Alcohol & Entertainment']);
+  const FIXED_EXCLUDE_FROM_RESERVE = new Set(['Joe - Individual Priorities','Katy - Individual Priorities']);
+  function isTracked(cat){ return budgetNames().has(cat) || fundNames().has(cat) || VARIABLE_NAMES.has(cat); }
+  function isPaymentCat(cat){ return ['Debt Payment','Loan Payment','Payment / Transfer','Income','Transfer'].includes(String(cat||'')); }
+  function signedImpact(t, amount, treatment){
+    amount=n(amount);
+    if(['Ignore / Transfer','Income','Sinking Fund Contribution','Debt Payment','Loan Payment'].includes(treatment)) return 0;
+    if(treatment==='Reimbursement / Credit') return -Math.abs(amount);
+    if(treatment==='Expense') return Math.abs(amount);
+    if(treatment==='Debt Payoff Extra') return Math.abs(amount);
+    const src=lower((t?.source||'')+' '+(t?.account||''));
+    if(src.includes('apple') || (src.includes('card') && !src.includes('schwab'))) return amount>0?amount:0;
+    return amount<0?Math.abs(amount):-Math.abs(amount);
+  }
+
+  window.transactionSpendAmount = function(t){
+    if(!inMonth(t)) return 0;
+    const sp=splits(t);
+    if(sp.length){
+      return sp.reduce((a,s)=>a+(isTracked(s.category)?signedImpact(t,s.amount,s.treatment||'Auto'):0),0);
     }
-    if(!dates.length) dates.push(`${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())}`);
-    return dates;
+    const cat=String(t?.category||'');
+    if(!isTracked(cat) || isPaymentCat(cat)) return 0;
+    return signedImpact(t,t.amount,tr(t));
+  };
+  window.txSpendByCategory = function(cat){
+    return txs().filter(inMonth).reduce((a,t)=>{
+      const sp=splits(t);
+      if(sp.length) return a+sp.filter(s=>s.category===cat).reduce((x,s)=>x+(isTracked(s.category)?signedImpact(t,s.amount,s.treatment||'Auto'):0),0);
+      return a+(t.category===cat?transactionSpendAmount(t):0);
+    },0);
+  };
+
+  function latestSchwabBalanceStable(){
+    const all=txs().map((t,i)=>({t,i,k:key(t,i)})).filter(o=>isSchwab(o.t)&&inMonth(o.t));
+    if(!all.length) return n(app.latestSchwabBalance);
+    all.sort((a,b)=>a.k.localeCompare(b.k));
+    // Start from the latest row WITH a running balance, then apply later Schwab rows without balances.
+    let rbIdx=-1, bal=NaN;
+    for(let i=0;i<all.length;i++){
+      const rb=all[i].t.runningBalance;
+      if(rb!==undefined && rb!==null && rb!=='' && Number.isFinite(Number(rb))){ rbIdx=i; bal=n(rb); }
+    }
+    if(rbIdx>=0){
+      for(let i=rbIdx+1;i<all.length;i++){
+        const rb=all[i].t.runningBalance;
+        if(rb!==undefined && rb!==null && rb!=='' && Number.isFinite(Number(rb))) bal=n(rb);
+        else bal += n(all[i].t.amount);
+      }
+      app.latestSchwabBalance=bal;
+      return bal;
+    }
+    const opening=n(app.openingCheckingBalance||app.openingBalance||app.startingCheckingBalance||app.carryoverBalance||app.settings?.openingCheckingBalance||0);
+    if(opening) return opening + all.reduce((a,o)=>a+n(o.t.amount),0);
+    return n(app.latestSchwabBalance);
   }
+  window.currentCheckingBalance = latestSchwabBalanceStable;
+  window.currentCheckingBalanceV21 = latestSchwabBalanceStable;
 
-  function txSpendForCategoryV42(name){
-    try {
-      if(typeof txSpendByCategory === 'function') return n(txSpendByCategory(name));
-    } catch(e){}
-    return (app.transactions || [])
-      .filter(t => currentMonthTx(t) && t.category === name)
-      .reduce((a,t) => a + Math.abs(n(t.amount)), 0);
+  function isExplicitDebtExtraSplit(parent,s){
+    if(!s) return false;
+    const treatment=String(s.treatment||'');
+    const cat=String(s.category||'');
+    const parentLooksDebt = String(parent?.category||'')==='Debt Payment' || String(parent?.treatment||'')==='Debt Payment' || /PAYMENT|PYMT|APPLECARD|CHASE|LOWES|LOWE|BEST BUY|US BANK|U\.S\. BANK/.test(desc(parent));
+    return parentLooksDebt && cat==='Debt Payoff' && treatment==='Debt Payoff Extra';
   }
+  function explicitDebtPayoffExtra(){
+    return txs().filter(inMonth).reduce((a,t)=>{
+      const sp=splits(t);
+      if(sp.length) return a+sp.filter(s=>isExplicitDebtExtraSplit(t,s)).reduce((x,s)=>x+abs(s.amount),0);
+      // Unsplit fallback only counts if the transaction itself is explicitly marked Debt Payoff Extra.
+      if(String(t.category||'')==='Debt Payoff' && String(t.treatment||'')==='Debt Payoff Extra') return a+abs(t.amount);
+      return a;
+    },0);
+  }
+  window.extraDebtPaidThisMonth = explicitDebtPayoffExtra;
+  window.debtPayoffExtraFromSplitsV29 = explicitDebtPayoffExtra;
 
-  function budgetRowsV42(){
-    const rows = [];
-    (app.spendingBudgets || []).forEach(b => rows.push({
-      name: b.name,
-      friendly: b.friendly || b.name,
-      budget: n(b.budget),
-      kind: 'monthly'
-    }));
+  function sinkingContributionStable(name){
+    if(name==='Debt Payoff') return explicitDebtPayoffExtra();
+    return txs().filter(inMonth).reduce((a,t)=>{
+      const sp=splits(t);
+      if(sp.length) return a+sp.filter(s=>s.category===name && s.treatment==='Sinking Fund Contribution').reduce((x,s)=>x+abs(s.amount),0);
+      return a+(t.category===name && tr(t)==='Sinking Fund Contribution'?abs(t.amount):0);
+    },0);
+  }
+  window.sinkingFundContributionAmount = sinkingContributionStable;
+  function sinkingPositionStable(f){
+    if(String(f.name)==='Debt Payoff') return explicitDebtPayoffExtra()-n(f.budget);
+    return n(f.balance)+n(f.saved)+sinkingContributionStable(f.name)-txSpendByCategory(f.name);
+  }
+  window.sinkingFundPosition = sinkingPositionStable;
 
-    // If variable necessities are still stored under bills in some months, include them here.
-    (app.bills || []).forEach(b => {
-      if(V42_FULL_RESERVE_CATEGORIES.has(b.name) && !rows.some(r => r.name === b.name)){
-        rows.push({name:b.name, friendly:b.name, budget:n(b.amount), kind:'variable-bill'});
+  function acctKeys(account){
+    const out=[...(account.paymentKeywords||[]), account.name||''];
+    const name=upper(account.name||'');
+    if(name.includes('APPLE CARD')) out.push('APPLECARD GSBANK','APPLECARD','APPLE CARD');
+    if(name.includes('CHASE') || name.includes('AMAZON')) out.push('CHASE CREDIT','CHASE CARD','AMAZON PRIME VISA','CHASE');
+    if(name.includes('LOWES')) out.push('LOWES','LOWE');
+    if(name.includes('BEST BUY')) out.push('BEST BUY');
+    if(name.includes('U.S. BANK') || name.includes('US BANK')) out.push('U.S. BANK','US BANK','U S BANK');
+    if(name.includes('MORTGAGE') || name.includes('NAVY')) out.push('NFCU MORT DEBIT');
+    if(name.includes('HELOC')) out.push('NFCU MORT DEBIT');
+    return [...new Set(out.map(upper).filter(Boolean))];
+  }
+  function isDebtTx(t){ return inMonth(t) && (String(t.category||'')==='Debt Payment' || String(t.treatment||'')==='Debt Payment' || /PAYMENT|PYMT|APPLECARD|CHASE|LOWES|LOWE|BEST BUY|US BANK|U\.S\. BANK/.test(desc(t))); }
+  function isLoanTx(t){ return inMonth(t) && (String(t.category||'')==='Loan Payment' || String(t.treatment||'')==='Loan Payment' || /NFCU MORT|BRIDGECREST|WELLS FARGO|APPLE WATCH/.test(desc(t))); }
+  function paidForAccount(account, kind){
+    let total=0;
+    const keys=acctKeys(account);
+    txs().filter(t=>kind==='loan'?isLoanTx(t):isDebtTx(t)).forEach(t=>{
+      const sp=splits(t);
+      if(sp.length){
+        total += sp.filter(s=>s.category===account.name && ['Debt Payment','Loan Payment','Auto'].includes(String(s.treatment||'Auto'))).reduce((a,s)=>a+abs(s.amount),0);
+      } else {
+        const d=desc(t);
+        if(keys.some(k=>d.includes(k))) total += abs(t.amount);
       }
     });
-
-    return rows.filter(r => r.budget > 0);
+    return Math.round(total*100)/100;
   }
+  function cardPaidMapStable(){ const out={}; (app.creditCards||[]).forEach(c=>out[c.name]=paidForAccount(c,'card')); return out; }
+  function loanPaidMapStable(){ const out={}; (app.loans||[]).forEach(l=>out[l.name]=paidForAccount(l,'loan')); return out; }
+  window.cardPaidMapV21 = cardPaidMapStable;
+  window.paidForScheduled = function(x){
+    if(x.kind==='card') return cardPaidMapStable()[x.name]||0;
+    if(x.kind==='loan') return loanPaidMapStable()[x.name]||0;
+    if(x.kind==='bill') return n((app.paidBills||{})[x.name]||0);
+    return 0;
+  };
 
-  function reservePlanV42(){
-    const dates = remainingReserveDatesV42();
-    const byDate = Object.fromEntries(dates.map(d => [d, 0]));
-    const detail = [];
-    const optional = [];
-
-    budgetRowsV42().forEach(b => {
-      const spent = txSpendForCategoryV42(b.name);
-      const remaining = Math.max(0, b.budget - spent);
-      if(remaining <= 0.009) return;
-
-      let probability = 0;
-      let included = false;
-      let mode = 'Excluded';
-
-      if(V42_FULL_RESERVE_CATEGORIES.has(b.name)){
-        probability = 1;
-        included = true;
-        mode = 'Predictable weekly reserve';
-      } else if(Object.prototype.hasOwnProperty.call(V42_PARTIAL_RESERVE_PROBABILITY, b.name)){
-        probability = V42_PARTIAL_RESERVE_PROBABILITY[b.name];
-        included = probability > 0;
-        mode = `${Math.round(probability * 100)}% probability reserve`;
-      }
-
-      const forecasted = remaining * probability;
-      const excluded = remaining - forecasted;
-
-      if(included && forecasted > 0.009){
-        const perDate = forecasted / dates.length;
-        dates.forEach(d => { byDate[d] += perDate; });
-        detail.push({category:b.name, budget:b.budget, spent, remaining, probability, forecasted, weekly:perDate, mode});
-      }
-
-      if(excluded > 0.009 || !included){
-        optional.push({category:b.name, remaining, included:forecasted, excluded: included ? excluded : remaining, reason: included ? 'Partially reserved' : 'Irregular / decision-based'});
-      }
-    });
-
-    const events = Object.entries(byDate)
-      .filter(([,amount]) => amount > 0.009)
-      .map(([date,amount]) => ({date, name:'Variable spending reserve (probability-based)', amount:-amount, type:'Variable Reserve'}));
-
-    return {dates, events, detail, optional};
-  }
-
-  function cashflowRowsV42(){
-    let bal = currentCheckingV42();
-    const rows = [[currentToday(), 'Latest Schwab/current checking balance', 0, bal, 'Start']];
-
-    const events = [
-      ...futurePaycheckEventsV42(),
-      ...fixedScheduledEventsV42(),
-      ...reservePlanV42().events
-    ].filter(e => e.date && Math.abs(n(e.amount)) > 0.009)
-     .sort((a,b) => a.date.localeCompare(b.date) || (n(b.amount) - n(a.amount)));
-
-    events.forEach(e => {
-      bal += n(e.amount);
-      rows.push([e.date, e.name, e.amount, bal, bal < 0 ? 'Negative' : bal < 2500 ? 'Low' : 'OK']);
-    });
-
+  function combinedBudgetRows(){
+    const rows=[];
+    (app.spendingBudgets||[]).forEach(b=>rows.push({name:b.name,friendly:b.friendly||b.name,budget:n(b.budget)}));
+    (app.bills||[]).forEach(b=>{ if(VARIABLE_NAMES.has(b.name) && !rows.some(r=>r.name===b.name)) rows.push({name:b.name,friendly:b.name,budget:n(b.amount)}); });
     return rows;
   }
-
-  window.cashflowRows = cashflowRowsV42;
-
-  function ensureProbabilityTablesV42(){
-    const section = document.querySelector('#cashflow .section');
-    if(!section) return;
-    if(!document.getElementById('cashflowReserveDetailV42')){
-      const wrap = document.createElement('div');
-      wrap.id = 'cashflowReserveDetailV42';
-      wrap.innerHTML = `
-        <h3>Probability-Based Variable Spending Reserve</h3>
-        <div class="small">
-          Predictable categories are recalculated from remaining monthly budget and spread across the remaining Fridays.
-          If a category is underspent this week, the unspent amount automatically rolls into the remaining forecast.
-        </div>
-        <table id="reserveDetailTableV42"></table>
-        <h3>Optional / Irregular Spending Not Deducted From Forecast</h3>
-        <div class="small">
-          These are real budget categories, but they are not treated like guaranteed weekly cash outflows.
-        </div>
-        <table id="optionalRiskTableV42"></table>`;
-      section.appendChild(wrap);
+  function paycheckReceivedStable(p){
+    if(p.received===true || String(p.received).toLowerCase()==='true'){
+      // Future rows marked TRUE by stale sheet data should not hide future income unless a matching deposit exists.
+      if(String(p.date||'') > todayV()) return false;
     }
+    const amt=abs(p.amount);
+    return txs().some(t=>inMonth(t) && isSchwab(t) && n(t.amount)>0 && Math.abs(abs(t.amount)-amt)<1.00);
   }
+  window.paycheckReceived = paycheckReceivedStable;
+  window.receivedPaycheckV21 = paycheckReceivedStable;
 
-  function renderProbabilityTablesV42(){
-    ensureProbabilityTablesV42();
-    const plan = reservePlanV42();
-    const detailTable = document.getElementById('reserveDetailTableV42');
-    const optionalTable = document.getElementById('optionalRiskTableV42');
-
-    if(detailTable){
-      detailTable.innerHTML =
-        '<tr><th>Category</th><th>Forecast Rule</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Remaining</th><th class="num">Forecasted</th><th class="num">Per Remaining Week</th></tr>' +
-        (plan.detail.length ? plan.detail.map(d => `
-          <tr>
-            <td>${safeEsc(d.category)}</td>
-            <td>${safeEsc(d.mode)}</td>
-            <td class="num">${safeMoney(d.budget)}</td>
-            <td class="num">${safeMoney(d.spent)}</td>
-            <td class="num">${safeMoney(d.remaining)}</td>
-            <td class="num">${safeMoney(d.forecasted)}</td>
-            <td class="num">${safeMoney(d.weekly)}</td>
-          </tr>`).join('') : '<tr><td colspan="7">No predictable variable spending left to reserve.</td></tr>');
-    }
-
-    if(optionalTable){
-      const totalExcluded = plan.optional.reduce((a,x)=>a+n(x.excluded),0);
-      optionalTable.innerHTML =
-        `<tr><th colspan="4">Potential optional/irregular spending not deducted: ${safeMoney(totalExcluded)}</th></tr>` +
-        '<tr><th>Category</th><th>Reason</th><th class="num">Remaining</th><th class="num">Not Deducted</th></tr>' +
-        (plan.optional.length ? plan.optional.map(o => `
-          <tr>
-            <td>${safeEsc(o.category)}</td>
-            <td>${safeEsc(o.reason)}</td>
-            <td class="num">${safeMoney(o.remaining)}</td>
-            <td class="num">${safeMoney(o.excluded)}</td>
-          </tr>`).join('') : '<tr><td colspan="4">No optional/irregular spending remaining.</td></tr>');
-    }
+  function fixedScheduledFuture(){
+    const items=[];
+    (app.bills||[]).forEach(b=>{ if(!VARIABLE_NAMES.has(b.name)) items.push({kind:'bill',name:b.name,amount:n(b.amount),due:b.due,bucket:'Bills'}); });
+    (app.creditCards||[]).forEach(c=>items.push({kind:'card',name:c.name,amount:n(c.min),due:c.due,bucket:'Credit Cards'}));
+    (app.loans||[]).forEach(l=>items.push({kind:'loan',name:l.name,amount:n(l.min),due:l.due,bucket:'Loans'}));
+    return items.map(x=>({...x,paid:window.paidForScheduled(x),left:Math.max(0,n(x.amount)-window.paidForScheduled(x)),date:(app.month||'')+'-'+String(x.due||1).padStart(2,'0')})).filter(x=>x.left>0 && x.date>=todayV()).sort((a,b)=>a.date.localeCompare(b.date));
   }
+  window.unpaidScheduledFuture = fixedScheduledFuture;
 
-  window.renderCashflow = function(){
-    const table = document.getElementById('cashflowTable');
-    if(!table) return;
-
-    const plan = reservePlanV42();
-    const weeklyReserveTotal = plan.events.reduce((a,e)=>a+Math.abs(n(e.amount)),0);
-    let rows =
-      `<tr><th colspan="5">
-        Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve.
-        Remaining variable reserve this month: ${safeMoney(weeklyReserveTotal)}
-      </th></tr>` +
-      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>';
-
-    cashflowRowsV42().forEach(r => {
-      const cls = r[4] === 'Negative' ? 'bad' : r[4] === 'Low' ? 'warn' : 'ok';
-      rows += `<tr><td>${safeEsc(r[0])}</td><td>${safeEsc(r[1])}</td><td class="num">${safeMoney(r[2])}</td><td class="num ${cls}">${safeMoney(r[3])}</td><td><span class="pill ${cls}">${safeEsc(r[4])}</span></td></tr>`;
+  function remainingFridays(){
+    const out=[]; const [y,m]=month().split('-').map(Number); if(!y||!m) return out;
+    const end=new Date(y,m,0); let d=new Date(todayV()+'T00:00:00');
+    while(d<=end){ if(d.getDay()===5) out.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1); }
+    if(!out.length) out.push(todayV());
+    return out;
+  }
+  function reserveWeight(name){
+    if(['Groceries','Dog Food','Auto Fuel & Maintenance','Services','House Cleaning','Household Consumables'].includes(name)) return 1;
+    if(['Basic Health & Personal Care','Kids Miscellaneous','Kids Experiences','Date Nights','Alcohol & Entertainment','Household Miscellaneous'].includes(name)) return .65;
+    return 0;
+  }
+  function variableReserveEvents(){
+    const fridays=remainingFridays();
+    const reserves=[];
+    combinedBudgetRows().forEach(b=>{
+      if(FIXED_EXCLUDE_FROM_RESERVE.has(b.name)) return;
+      const weight=reserveWeight(b.name);
+      if(weight<=0) return;
+      const left=Math.max(0,n(b.budget)-txSpendByCategory(b.name));
+      const reserve=left*weight;
+      if(reserve>0.009) reserves.push({name:b.name, amount:reserve});
     });
-
-    table.innerHTML = rows;
-    renderProbabilityTablesV42();
+    const total=reserves.reduce((a,x)=>a+x.amount,0);
+    if(total<=0) return [];
+    const per=total/fridays.length;
+    return fridays.map((date,idx)=>({date,name:'Variable spending reserve (probability-based)',amount:-(idx===fridays.length-1 ? total-per*(fridays.length-1) : per),type:'Reserve'}));
+  }
+  window.cashflowRows = function(){
+    let bal=latestSchwabBalanceStable();
+    const rows=[[todayV(),'Latest Schwab/current checking balance',0,bal,'Start']];
+    const events=[];
+    (app.paychecks||[]).forEach(p=>{ if(String(p.date||'')>=todayV() && !paycheckReceivedStable(p)) events.push({date:p.date,name:p.name,amount:n(p.amount),type:'Income'}); });
+    fixedScheduledFuture().forEach(x=>events.push({date:x.date,name:x.name+' ('+x.bucket+')',amount:-x.left,type:x.bucket}));
+    variableReserveEvents().forEach(e=>events.push(e));
+    events.sort((a,b)=>String(a.date).localeCompare(String(b.date)) || (b.amount-a.amount));
+    events.forEach(e=>{ bal+=n(e.amount); rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<2500?'Low':'OK']); });
+    return rows;
+  };
+  window.renderCashflow = function(){
+    const table=document.getElementById('cashflowTable'); if(!table) return;
+    const totalReserve=variableReserveEvents().reduce((a,e)=>a+Math.abs(n(e.amount)),0);
+    table.innerHTML=`<tr><th colspan="5">Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve. Remaining variable reserve this month: ${money(totalReserve)}</th></tr>`+
+      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>'+
+      cashflowRows().map(r=>{ const cls=r[4]==='Negative'?'bad':r[4]==='Low'?'warn':'ok'; return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`; }).join('');
   };
 
-  // Keep "Upcoming Scheduled Money Out" from listing variable spending as fixed bills.
-  const previousUnpaidScheduledFutureV42 = typeof unpaidScheduledFuture === 'function' ? unpaidScheduledFuture : null;
-  window.unpaidScheduledFuture = function(){
-    if(previousUnpaidScheduledFutureV42){
-      try {
-        return previousUnpaidScheduledFutureV42().filter(x => !V42_FIXED_BILL_EXCLUSIONS.has(x.name));
-      } catch(e){}
-    }
-    return fixedScheduledEventsV42().map(e => ({
-      date:e.date,
-      name:e.name.replace(/\s+\([^)]+\)$/,''),
-      bucket:e.type,
-      left:Math.abs(n(e.amount))
-    }));
+  function renderTopAndDailyStable(){
+    const top=document.getElementById('topMetrics'); if(!top) return;
+    const budgets=combinedBudgetRows();
+    const totalBudget=budgets.reduce((a,b)=>a+n(b.budget),0);
+    const totalSpent=budgets.reduce((a,b)=>a+txSpendByCategory(b.name),0);
+    const left=totalBudget-totalSpent;
+    const sink=(app.sinkingFunds||[]).filter(f=>f.name!=='Debt Payoff').reduce((a,f)=>a+sinkingPositionStable(f),0);
+    const needs=txs().filter(t=>inMonth(t)&&t.category==='Needs Review').length;
+    const latest=txs().map((t,i)=>({t,i,k:key(t,i)})).filter(o=>isSchwab(o.t)&&inMonth(o.t)).sort((a,b)=>b.k.localeCompare(a.k))[0]?.t;
+    const checking=latestSchwabBalanceStable();
+    top.innerHTML=[
+      ['Checking now',money(checking),checking<2500?'warn':'ok'],
+      ['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],
+      ['Sinking fund net',money(sink),sink<0?'bad':'ok'],
+      ['Needs review',needs,needs?'warn':'ok'],
+      ['Sheet sync',(typeof getApiUrl==='function'&&getApiUrl())?'Connected':'No API URL',(typeof getApiUrl==='function'&&getApiUrl())?'ok':'warn'],
+      ['Budget month',esc(app.month||''),''],
+      ['Current-month tx',txs().filter(inMonth).length,''],
+      ['Latest Schwab balance row',latest?`${esc(latest.date)}<div class="tiny">${esc(latest.description||latest.rawDescription||'')}</div>`:'—','']
+    ].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]||''}">${m[1]}</div></div>`).join('');
+
+    const rem=document.getElementById('remainingTable');
+    if(rem){ rem.innerHTML='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th><th>Progress</th></tr>'+budgets.map(b=>{ const spent=txSpendByCategory(b.name), remaining=n(b.budget)-spent, pct=b.budget?Math.max(0,Math.min(100,Math.round(spent/b.budget*100))):0; const cls=remaining<0?'bad':pct>80?'warn':''; return `<tr><td>${esc(b.friendly||b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${remaining<0?'bad':''}">${money(remaining)}</td><td><div class="progress"><div class="bar ${cls}" style="width:${pct}%"></div></div><div class="tiny">${pct}%</div></td></tr>`; }).join(''); }
+    const st=document.getElementById('sinkingPositionTable');
+    if(st){ st.innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned</th><th class="num">Actual / Contributed</th><th class="num">Spent</th><th class="num">Position</th></tr>'+(app.sinkingFunds||[]).map(f=>{ const actual=sinkingContributionStable(f.name), spent=f.name==='Debt Payoff'?0:txSpendByCategory(f.name), pos=sinkingPositionStable(f); return `<tr><td>${esc(f.name)}${f.name==='Debt Payoff'?'<div class="tiny">Explicit Debt Payoff Extra only</div>':''}</td><td class="num">${f.name==='Debt Payoff'?'—':money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(actual)}</td><td class="num">${f.name==='Debt Payoff'?'—':money(spent)}</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`; }).join(''); }
+  }
+  window.renderDailyStableV45=renderTopAndDailyStable;
+
+  const oldRenderDaily=window.renderDaily;
+  window.renderDaily=function(){ try{ if(typeof oldRenderDaily==='function') oldRenderDaily(); }catch(e){ console.warn('old renderDaily failed',e); } renderTopAndDailyStable(); document.body.classList.remove('v45-awaiting-sheet'); };
+  const oldRenderBudgets=window.renderBudgets;
+  window.renderBudgets=function(){ try{ if(typeof oldRenderBudgets==='function') oldRenderBudgets(); }catch(e){} const table=document.getElementById('sinkingTable'); if(table){ table.innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned Monthly</th><th class="num">Actual / Contributed</th><th class="num">Spent This Month</th><th class="num">Current Position</th></tr>'+(app.sinkingFunds||[]).map(f=>{ const actual=sinkingContributionStable(f.name), spent=f.name==='Debt Payoff'?0:txSpendByCategory(f.name), pos=sinkingPositionStable(f); return `<tr><td>${esc(f.name)}${f.name==='Debt Payoff'?'<div class="tiny">Explicit Debt Payoff Extra only.</div>':''}</td><td class="num">${f.name==='Debt Payoff'?'—':money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(actual)}</td><td class="num">${f.name==='Debt Payoff'?'—':money(spent)}</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`; }).join(''); } };
+  const oldRenderDebts=window.renderDebts;
+  window.renderDebts=function(){
+    const pc=cardPaidMapStable(), pl=loanPaidMapStable();
+    const cc=document.getElementById('ccTable'); if(cc) cc.innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Min</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+(app.creditCards||[]).map(c=>`<tr><td>${esc(c.name)}</td><td class="num">${money(abs(c.owed))}</td><td class="num">${money(c.min)}</td><td class="num">${money(pc[c.name]||0)}</td><td>${esc(c.due)}</td><td class="num">${n(c.apr).toFixed(2)}%</td></tr>`).join('');
+    const lt=document.getElementById('loanTable'); if(lt) lt.innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Payment</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+(app.loans||[]).map(l=>`<tr><td>${esc(l.name)}</td><td class="num">${money(abs(l.owed))}</td><td class="num">${money(l.min)}</td><td class="num">${money(pl[l.name]||0)}</td><td>${esc(l.due)}</td><td class="num">${n(l.apr).toFixed(2)}%</td></tr>`).join('');
+    const bt=document.getElementById('billTable'); if(bt && typeof oldRenderDebts==='function'){ try{ oldRenderDebts(); }catch(e){} }
   };
 
-  // Make sure future paychecks stay visible after Sheet load and after any old renderer runs.
-  const previousLoadFromSheetV42 = typeof loadFromSheet === 'function' ? loadFromSheet : null;
-  if(previousLoadFromSheetV42){
-    window.loadFromSheet = async function(){
-      const result = await previousLoadFromSheetV42.apply(this, arguments);
-      setTimeout(() => { try { renderCashflow(); } catch(e){ console.warn('v42 cashflow after load failed', e); } }, 0);
-      setTimeout(() => { try { renderCashflow(); } catch(e){} }, 300);
-      return result;
+  function setPlaceholders(){
+    const top=document.getElementById('topMetrics'); if(top) top.innerHTML=['Checking now','Monthly spend left','Sinking fund net','Needs review','Sheet sync','Budget month','Current-month tx','Latest Schwab balance row'].map(label=>`<div class="metric"><div class="label">${label}</div><div class="value loading-value">Loading</div></div>`).join('');
+    ['katyView','joeView'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML='<div class="small">Loading live Google Sheet data…</div>'; });
+  }
+  const prevLoad=window.loadFromSheet;
+  if(typeof prevLoad==='function'){
+    window.loadFromSheet=async function(){
+      document.body.classList.add('v45-awaiting-sheet'); setPlaceholders();
+      try{ const out=await prevLoad.apply(this,arguments); try{ renderCashflow(); renderDaily(); renderBudgets(); renderDebts(); }catch(e){} return out; }
+      finally{ document.body.classList.remove('v45-awaiting-sheet'); }
     };
   }
-
-  const previousRenderV42 = typeof render === 'function' ? render : null;
-  if(previousRenderV42){
-    window.render = function(){
-      const result = previousRenderV42.apply(this, arguments);
-      try { renderCashflow(); } catch(e){ console.warn('v42 renderCashflow failed', e); }
-      return result;
-    };
-  }
-
-  // Update notice copy.
-  const cashNotice = document.querySelector('#cashflow .notice');
-  if(cashNotice){
-    cashNotice.innerHTML = 'Past spending is already reflected in the latest Schwab balance. Forecast includes future paychecks, fixed bills/debt payments, and probability-based reserves for remaining variable spending.';
-  }
-
-  try { renderCashflow(); } catch(e){ console.warn('v42 initial cashflow failed', e); }
+  // If a sheet load is configured, show placeholders immediately so stale embedded data never appears as final truth.
+  try{ if(typeof getApiUrl==='function' && getApiUrl()) setPlaceholders(); else document.body.classList.remove('v45-awaiting-sheet'); }catch(e){ document.body.classList.remove('v45-awaiting-sheet'); }
+  setTimeout(()=>{ try{ renderCashflow(); renderDaily(); renderBudgets(); renderDebts(); }catch(e){} document.body.classList.remove('v45-awaiting-sheet'); }, 2500);
 })();
 </script>
 
