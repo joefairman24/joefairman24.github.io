@@ -4014,3 +4014,115 @@ button.tiny-btn {
   try { renderDebts(); renderCashflow(); renderDaily(); } catch(e){ console.warn('v51 loan paid fix render skipped', e); }
 })();
 </script>
+
+
+<script>
+/* ===== v52: Credit Card confirmed-paid split allocation fix ONLY =====
+   Source of truth: this attached index.html only.
+   Fix: Apple Card payment splits where the minimum line is generic "Debt Payment"
+   are allocated back to Apple Card - Joe when the parent transaction is from Apple Card.
+*/
+(function(){
+  function nV52(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
+  function absV52(v){ return Math.abs(nV52(v)); }
+  function upperV52(s){ return String(s||'').toUpperCase(); }
+  function descV52(t){ return upperV52((t && (t.rawDescription || t.description)) || ''); }
+  function srcV52(t){ return upperV52((t && (t.source || t.account)) || ''); }
+  function splitsV52(t){ return Array.isArray(t && t.splits) ? t.splits : []; }
+  function inMonthV52(t){
+    if(typeof currentMonthTxV21 === 'function') return currentMonthTxV21(t);
+    if(typeof inBudgetMonth === 'function') return inBudgetMonth(t);
+    return String((t && t.date) || '').slice(0,7) === String(app.month || '');
+  }
+  function cardKeysV52(card){
+    const keys=[...(card.paymentKeywords || []), card.name || ''];
+    const name=upperV52(card.name || '');
+    if(name.includes('APPLE CARD')) keys.push('APPLECARD GSBANK','APPLECARD','APPLE CARD');
+    if(name.includes('CHASE') || name.includes('AMAZON')) keys.push('CHASE CREDIT','CHASE CARD','AMAZON PRIME VISA','CHASE');
+    if(name.includes('LOWES')) keys.push('LOWES','LOWE');
+    if(name.includes('BEST BUY')) keys.push('BEST BUY');
+    if(name.includes('U.S. BANK') || name.includes('US BANK')) keys.push('U.S. BANK','US BANK','U S BANK');
+    return [...new Set(keys.map(upperV52).filter(Boolean))];
+  }
+  function parentMatchesCardV52(t, card){
+    const haystack = descV52(t) + ' ' + srcV52(t);
+    const name = upperV52(card.name || '');
+    const keys = cardKeysV52(card);
+    if(keys.some(k => haystack.includes(k))) return true;
+
+    // Apple Card exports the payment transaction with Source/Account = Apple Card,
+    // while the description can be a generic ACH deposit. That still belongs to Apple Card - Joe.
+    if(name.includes('APPLE CARD') && srcV52(t).includes('APPLE CARD')) return true;
+    if(name.includes('APPLE CARD') && srcV52(t).includes('APPLECARD')) return true;
+
+    return false;
+  }
+  function isCardPaymentTxV52(t){
+    if(!inMonthV52(t)) return false;
+    const cat=String((t && t.category) || '');
+    const treatment=String((t && (t.treatment || t.type)) || 'Auto');
+    const d=descV52(t);
+    const amount=nV52(t && t.amount);
+    if(amount >= 0 && !splitsV52(t).length) return false;
+    return cat==='Debt Payment' ||
+      treatment==='Debt Payment' ||
+      /PAYMENT|PYMT|ACH DEPOSIT|APPLECARD|CHASE|LOWES|LOWE|BEST BUY|US BANK|U\.S\. BANK/.test(d) ||
+      (srcV52(t).includes('APPLE CARD') && amount < 0);
+  }
+  function splitCountsAsCardPaymentV52(split){
+    const treatment=String((split && split.treatment) || 'Auto');
+    const category=String((split && split.category) || '');
+    return treatment==='Debt Payment' ||
+      treatment==='Debt Payoff Extra' ||
+      category==='Debt Payment' ||
+      category==='Debt Payoff';
+  }
+  function paidForCardV52(card){
+    let total=0;
+    (app.transactions || []).forEach(t=>{
+      if(!isCardPaymentTxV52(t)) return;
+      if(!parentMatchesCardV52(t, card)) return;
+
+      const sp=splitsV52(t);
+      if(sp.length){
+        total += sp
+          .filter(s => s.category===card.name || splitCountsAsCardPaymentV52(s))
+          .reduce((a,s)=>a+absV52(s.amount),0);
+      } else {
+        total += absV52(t.amount);
+      }
+    });
+
+    // Fallback only when no matching transaction/split was found.
+    if(total <= 0 && app.paidCards && nV52(app.paidCards[card.name]) > 0){
+      total = nV52(app.paidCards[card.name]);
+    }
+    return Math.round(total*100)/100;
+  }
+  function cardPaidMapV52(){
+    const out={};
+    (app.creditCards || []).forEach(c=>{ out[c.name]=paidForCardV52(c); });
+    return out;
+  }
+
+  window.cardPaidMapV21 = cardPaidMapV52;
+
+  const previousPaidForScheduledV52 = window.paidForScheduled;
+  window.paidForScheduled = function(x){
+    if(x && x.kind==='card') return cardPaidMapV52()[x.name] || 0;
+    return typeof previousPaidForScheduledV52 === 'function' ? previousPaidForScheduledV52(x) : 0;
+  };
+
+  const previousRenderDebtsV52 = window.renderDebts;
+  window.renderDebts = function(){
+    if(typeof previousRenderDebtsV52 === 'function') previousRenderDebtsV52();
+    const table=document.getElementById('ccTable');
+    if(!table) return;
+    const paid=cardPaidMapV52();
+    table.innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Min</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+
+      (app.creditCards||[]).map(c=>`<tr><td>${esc(c.name)}</td><td class="num">${money(absV52(c.owed))}</td><td class="num">${money(c.min)}</td><td class="num">${money(paid[c.name]||0)}</td><td>${esc(c.due)}</td><td class="num">${nV52(c.apr).toFixed(2)}%</td></tr>`).join('');
+  };
+
+  try { renderDebts(); } catch(e){ console.warn('v52 card paid fix render skipped', e); }
+})();
+</script>
