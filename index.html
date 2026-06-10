@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Fairman Family Budget Dashboard v31</title>
+<title>Fairman Family Budget Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#f7f3ea;--card:#fffdf8;--ink:#263238;--muted:#667085;--line:#d0d5dd;--green:#dff4df;--pink:#f7dddd;--blue:#dbeafe;--cream:#fff7ed;--bad:#b42318;--warn:#b54708;--ok:#027a48;--dark:#263238}
@@ -38,9 +38,21 @@ body.loading main{opacity:1!important;pointer-events:auto!important}
 @keyframes v28pulse{0%{background-position:200% 0}100%{background-position:-200% 0}}
 </style>
 
+
+<style>
+/* v45: prevent stale embedded data flash before live Sheet load */
+body.v45-awaiting-sheet #topMetrics,
+body.v45-awaiting-sheet #katyView,
+body.v45-awaiting-sheet #joeView,
+body.v45-awaiting-sheet #remainingTable,
+body.v45-awaiting-sheet #sinkingPositionTable,
+body.v45-awaiting-sheet #upcomingTable,
+body.v45-awaiting-sheet #confirmedTable { visibility:hidden; }
+body.v45-awaiting-sheet #daily .section::after { content:"Loading live Google Sheet data…"; color:#667085; font-size:13px; }
+</style>
 </head>
-<body>
-<header><h1>Fairman Family Budget Dashboard v31</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
+<body class="v45-awaiting-sheet">
+<header><h1>Fairman Family Budget Dashboard</h1><div class="small"></div><nav><button class="active" data-panel="daily">Daily Check</button><button data-panel="transactions">Transactions</button><button data-panel="cashflow">Cash Flow</button><button data-panel="budgets">Budgets</button><button data-panel="debts">Cards / Loans / Bills</button><button data-panel="import">Import</button></nav></header>
 
 </div>
 <main>
@@ -1209,7 +1221,7 @@ render();
    To make the API URL work in incognito/for both Joe and Katy, paste your Apps Script Web App URL below.
    Example: const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/.../exec';
 */
-const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycby2Phk4jZyVyiXhtVK9E1nJLNAPzdOyTwP0v3DVRppUCjeYpAVN5zG-GqVHF0Sw-OsN/exec';
+const HARD_CODED_APPS_SCRIPT_URL_V20 = 'https://script.google.com/macros/s/AKfycbxNDg-2Qfawsm1OlcZ5HTJtZkuIzKsvHYzSCglfgh7ZctioGG7VWKldlKAMiuUSceNH/exec';
 
 save = function(){ /* no-op: Google Sheets is the database */ };
 load = function(){ return structuredClone ? structuredClone(initialData) : JSON.parse(JSON.stringify(initialData)); };
@@ -3240,130 +3252,2099 @@ button.tiny-btn {
 </script>
 
 
-
 <script>
-/* ===== v55: Katy paycheck cash-flow fix ONLY =====
-   Source: this exact attached index.html.
-   Scope: Cash Flow paycheck events only.
-   Why: prior cash-flow logic chose Sheet paychecks OR embedded paychecks. If the Sheet
-   paychecks were incomplete, Katy's future paycheck disappeared. This merges them.
+/* ===== v45 FULL STABLE PATCH =====
+   Built on the full attached index.html. Does not replace the app.
+   Fixes:
+   - Debt Payoff sinking fund: only explicit Debt Payoff Extra split/tx counts.
+   - No stale initial snapshot/Katy/Joe values while Sheet is loading.
+   - Probability-based cash-flow forecast with correct current checking start.
+   - Cards/loans confirmed paid respect split transactions.
 */
 (function(){
-  const ORIGINAL_APP_V55 = (()=>{
-    try { return JSON.parse(document.getElementById('initialData')?.textContent || '{}'); }
-    catch(e){ return {}; }
-  })();
-
-  function n(v){
-    const x = Number(String(v ?? '').replace(/[$,]/g,''));
-    return Number.isFinite(x) ? x : 0;
+  const PATCH='v45';
+  function n(v){ const x=Number(String(v??'').replace(/[$,]/g,'')); return Number.isFinite(x)?x:0; }
+  function abs(v){ return Math.abs(n(v)); }
+  function month(){ return String(app?.month||''); }
+  function todayV(){ return String(app?.today || (typeof today==='function'?today():'')).slice(0,10); }
+  function inMonth(t){ return String(t?.date||'').slice(0,7)===month(); }
+  function txs(){ return Array.isArray(app?.transactions)?app.transactions:[]; }
+  function splits(t){ return Array.isArray(t?.splits)?t.splits:[]; }
+  function tr(t){ return t?.treatment || t?.type || 'Auto'; }
+  function lower(s){ return String(s||'').toLowerCase(); }
+  function upper(s){ return String(s||'').toUpperCase(); }
+  function desc(t){ return upper((t?.rawDescription||'')+' '+(t?.description||'')); }
+  function isSchwab(t){ return lower((t?.source||'')+' '+(t?.account||'')).includes('schwab'); }
+  function key(t,i){ return String(t?.date||'')+'|'+String(t?.posted||'')+'|'+String(i).padStart(6,'0'); }
+  function budgetNames(){ return new Set((app.spendingBudgets||[]).map(b=>b.name)); }
+  function fundNames(){ return new Set((app.sinkingFunds||[]).map(f=>f.name)); }
+  const VARIABLE_NAMES = new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services','Household Consumables','Household Miscellaneous','Kids Miscellaneous','Kids Experiences','Date Nights','Alcohol & Entertainment']);
+  const FIXED_EXCLUDE_FROM_RESERVE = new Set(['Joe - Individual Priorities','Katy - Individual Priorities']);
+  function isTracked(cat){ return budgetNames().has(cat) || fundNames().has(cat) || VARIABLE_NAMES.has(cat); }
+  function isPaymentCat(cat){ return ['Debt Payment','Loan Payment','Payment / Transfer','Income','Transfer'].includes(String(cat||'')); }
+  function signedImpact(t, amount, treatment){
+    amount=n(amount);
+    if(['Ignore / Transfer','Income','Sinking Fund Contribution','Debt Payment','Loan Payment'].includes(treatment)) return 0;
+    if(treatment==='Reimbursement / Credit') return -Math.abs(amount);
+    if(treatment==='Expense') return Math.abs(amount);
+    if(treatment==='Debt Payoff Extra') return Math.abs(amount);
+    const src=lower((t?.source||'')+' '+(t?.account||''));
+    if(src.includes('apple') || (src.includes('card') && !src.includes('schwab'))) return amount>0?amount:0;
+    return amount<0?Math.abs(amount):-Math.abs(amount);
   }
-  function pad(v){ return String(v).padStart(2,'0'); }
-  function isoDateV55(v){
-    if(v === undefined || v === null || v === '') return '';
-    if(typeof v === 'number' && Number.isFinite(v) && v > 30000){
-      const d = new Date(Date.UTC(1899,11,30) + v * 86400000);
-      return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
+
+  window.transactionSpendAmount = function(t){
+    if(!inMonth(t)) return 0;
+    const sp=splits(t);
+    if(sp.length){
+      return sp.reduce((a,s)=>a+(isTracked(s.category)?signedImpact(t,s.amount,s.treatment||'Auto'):0),0);
     }
-    if(v instanceof Date && !isNaN(v)) return `${v.getFullYear()}-${pad(v.getMonth()+1)}-${pad(v.getDate())}`;
-    const s = String(v).trim();
-    let m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
-    if(m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
-    m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})(?:\s.*)?$/);
-    if(m){ let y = Number(m[3]); if(y < 100) y += 2000; return `${y}-${pad(m[1])}-${pad(m[2])}`; }
-    const d = new Date(s);
-    if(!isNaN(d)) return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-    return s;
-  }
-  function todayIsoV55(){ return isoDateV55(typeof today === 'function' ? today() : app?.today || new Date()); }
-  function monthV55(){ return String(app?.month || todayIsoV55().slice(0,7)); }
-  function descV55(t){ return String((t?.description || '') + ' ' + (t?.rawDescription || '')).toLowerCase(); }
-  function isSchwabV55(t){ return String((t?.source || '') + ' ' + (t?.account || '')).toLowerCase().includes('schwab'); }
-  function inMonthV55(t){ return isoDateV55(t?.date).slice(0,7) === monthV55(); }
-
-  function normalizePaycheckRowV55(p, source){
-    const date = isoDateV55(p?.date || p?.payDate || p?.paymentDate);
-    const amount = n(p?.amount || p?.Amount);
-    const name = String(p?.name || p?.description || p?.person || 'Paycheck').trim();
-    if(!date || amount <= 0 || date.slice(0,7) !== monthV55()) return null;
-    return { raw:p, date, name, amount, source };
-  }
-
-  function mergedPaychecksV55(){
-    const sheet = Array.isArray(app?.paychecks) ? app.paychecks : [];
-    const embedded = Array.isArray(ORIGINAL_APP_V55.paychecks) ? ORIGINAL_APP_V55.paychecks : [];
-    const rows = [];
-
-    // Sheet rows win, but embedded rows fill gaps. This is the actual fix.
-    [...sheet.map(p=>normalizePaycheckRowV55(p,'sheet')), ...embedded.map(p=>normalizePaycheckRowV55(p,'embedded'))]
-      .filter(Boolean)
-      .forEach(p=>{
-        // De-dupe by date + amount. That prevents duplicate rows when Sheet and embedded both contain the same paycheck.
-        const key = `${p.date}|${Math.round(p.amount * 100)}`;
-        if(!rows.some(x => `${x.date}|${Math.round(x.amount * 100)}` === key)) rows.push(p);
-      });
-
-    return rows.sort((a,b)=>a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
-  }
-
-  function paycheckActuallyPostedV55(p){
-    const pDate = isoDateV55(p.date || p.raw?.date);
-    if(!pDate) return false;
-    if(pDate > todayIsoV55()) return false; // future paychecks should stay visible in Cash Flow
-    const target = Math.abs(n(p.amount || p.raw?.amount));
-    if(!target) return false;
-
-    // Do not trust stale TRUE flags by themselves. Require a real matching Schwab deposit.
-    return (app.transactions || []).some(t=>{
-      if(!inMonthV55(t) || !isSchwabV55(t)) return false;
-      const amount = n(t.amount);
-      if(amount <= 0) return false;
-      if(Math.abs(Math.abs(amount) - target) > 1.00) return false;
-      const tDate = isoDateV55(t.date || t.posted);
-      if(tDate && tDate > pDate) return false;
-      return /payroll|direct dep|deposit|marine|max|paycheck|salary/i.test(descV55(t));
-    });
-  }
-
-  window.paycheckReceived = paycheckActuallyPostedV55;
-  window.paycheckIsReceivedV20 = paycheckActuallyPostedV55;
-  window.receivedPaycheckV21 = paycheckActuallyPostedV55;
-
-  window.futurePaycheckEventsV55 = function(){
-    const today = todayIsoV55();
-    return mergedPaychecksV55()
-      .filter(p => p.date >= today && !paycheckActuallyPostedV55(p))
-      .map(p => ({date:p.date, name:p.name, amount:p.amount, type:'Income'}));
+    const cat=String(t?.category||'');
+    if(!isTracked(cat) || isPaymentCat(cat)) return 0;
+    return signedImpact(t,t.amount,tr(t));
+  };
+  window.txSpendByCategory = function(cat){
+    return txs().filter(inMonth).reduce((a,t)=>{
+      const sp=splits(t);
+      if(sp.length) return a+sp.filter(s=>s.category===cat).reduce((x,s)=>x+(isTracked(s.category)?signedImpact(t,s.amount,s.treatment||'Auto'):0),0);
+      return a+(t.category===cat?transactionSpendAmount(t):0);
+    },0);
   };
 
-  window.futurePaycheckEventsV41 = window.futurePaycheckEventsV55;
-  window.futurePaycheckEventsV40 = window.futurePaycheckEventsV55;
+  function latestSchwabBalanceStable(){
+    const all=txs().map((t,i)=>({t,i,date:String(t.date||''),posted:String(t.posted||''),rb:t.runningBalance})).filter(o=>isSchwab(o.t)&&inMonth(o.t));
+    if(!all.length) return n(app.latestSchwabBalance);
+    const rbRows=all.filter(o=>o.rb!==undefined && o.rb!==null && o.rb!=='' && Number.isFinite(Number(o.rb)));
+    if(rbRows.length){
+      // Pick the newest row with a running balance. If same day, pick the first row in import/display order.
+      rbRows.sort((a,b)=>{
+        const d=b.date.localeCompare(a.date); if(d) return d;
+        const p=b.posted.localeCompare(a.posted); if(p) return p;
+        return a.i-b.i;
+      });
+      const base=rbRows[0];
+      let bal=n(base.rb);
+      // Apply newer Schwab rows that lack running balance. For same-day CSV imports, newer rows often appear above the running-balance row.
+      all.forEach(o=>{
+        const hasRb=o.rb!==undefined && o.rb!==null && o.rb!=='' && Number.isFinite(Number(o.rb));
+        if(hasRb) return;
+        const laterDate=o.date>base.date || (o.date===base.date && o.posted>base.posted);
+        const sameDayAbove=o.date===base.date && o.posted===base.posted && o.i<base.i;
+        if(laterDate || sameDayAbove) bal += n(o.t.amount);
+      });
+      app.latestSchwabBalance=bal;
+      return bal;
+    }
+    const opening=n(app.openingCheckingBalance||app.openingBalance||app.startingCheckingBalance||app.carryoverBalance||app.settings?.openingCheckingBalance||0);
+    if(opening) return opening + all.reduce((a,o)=>a+n(o.t.amount),0);
+    return n(app.latestSchwabBalance);
+  }
+  window.currentCheckingBalance = latestSchwabBalanceStable;
+  window.currentCheckingBalanceV21 = latestSchwabBalanceStable;
 
-  const variableReserveEventsBaseV55 = window.variableReserveEventsV39 || function(){ return []; };
-  const unpaidScheduledBaseV55 = window.unpaidScheduledFuture || function(){ return []; };
+  function isExplicitDebtExtraSplit(parent,s){
+    if(!s) return false;
+    const treatment=String(s.treatment||'');
+    const cat=String(s.category||'');
+    const parentLooksDebt = String(parent?.category||'')==='Debt Payment' || String(parent?.treatment||'')==='Debt Payment' || /PAYMENT|PYMT|APPLECARD|CHASE|LOWES|LOWE|BEST BUY|US BANK|U\.S\. BANK/.test(desc(parent));
+    return parentLooksDebt && cat==='Debt Payoff' && treatment==='Debt Payoff Extra';
+  }
+  function explicitDebtPayoffExtra(){
+    return txs().filter(inMonth).reduce((a,t)=>{
+      const sp=splits(t);
+      if(sp.length) return a+sp.filter(s=>isExplicitDebtExtraSplit(t,s)).reduce((x,s)=>x+abs(s.amount),0);
+      // Unsplit fallback only counts if the transaction itself is explicitly marked Debt Payoff Extra.
+      if(String(t.category||'')==='Debt Payoff' && String(t.treatment||'')==='Debt Payoff Extra') return a+abs(t.amount);
+      return a;
+    },0);
+  }
+  window.extraDebtPaidThisMonth = explicitDebtPayoffExtra;
+  window.debtPayoffExtraFromSplitsV29 = explicitDebtPayoffExtra;
+
+  function sinkingContributionStable(name){
+    if(name==='Debt Payoff') return explicitDebtPayoffExtra();
+    return txs().filter(inMonth).reduce((a,t)=>{
+      const sp=splits(t);
+      if(sp.length) return a+sp.filter(s=>s.category===name && s.treatment==='Sinking Fund Contribution').reduce((x,s)=>x+abs(s.amount),0);
+      return a+(t.category===name && tr(t)==='Sinking Fund Contribution'?abs(t.amount):0);
+    },0);
+  }
+  window.sinkingFundContributionAmount = sinkingContributionStable;
+  function sinkingPositionStable(f){
+    if(String(f.name)==='Debt Payoff') return explicitDebtPayoffExtra()-n(f.budget);
+    return n(f.balance)+n(f.saved)+sinkingContributionStable(f.name)-txSpendByCategory(f.name);
+  }
+  window.sinkingFundPosition = sinkingPositionStable;
+
+  function acctKeys(account){
+    const out=[...(account.paymentKeywords||[]), account.name||''];
+    const name=upper(account.name||'');
+    if(name.includes('APPLE CARD')) out.push('APPLECARD GSBANK','APPLECARD','APPLE CARD');
+    if(name.includes('CHASE') || name.includes('AMAZON')) out.push('CHASE CREDIT','CHASE CARD','AMAZON PRIME VISA','CHASE');
+    if(name.includes('LOWES')) out.push('LOWES','LOWE');
+    if(name.includes('BEST BUY')) out.push('BEST BUY');
+    if(name.includes('U.S. BANK') || name.includes('US BANK')) out.push('U.S. BANK','US BANK','U S BANK');
+    if(name.includes('MORTGAGE') || name.includes('NAVY')) out.push('NFCU MORT DEBIT');
+    if(name.includes('HELOC')) out.push('NFCU MORT DEBIT');
+    return [...new Set(out.map(upper).filter(Boolean))];
+  }
+  function isDebtTx(t){ return inMonth(t) && (String(t.category||'')==='Debt Payment' || String(t.treatment||'')==='Debt Payment' || /PAYMENT|PYMT|APPLECARD|CHASE|LOWES|LOWE|BEST BUY|US BANK|U\.S\. BANK/.test(desc(t))); }
+  function isLoanTx(t){ return inMonth(t) && (String(t.category||'')==='Loan Payment' || String(t.treatment||'')==='Loan Payment' || /NFCU MORT|BRIDGECREST|WELLS FARGO|APPLE WATCH/.test(desc(t))); }
+  function paidForAccount(account, kind){
+    let total=0;
+    const keys=acctKeys(account);
+    txs().filter(t=>kind==='loan'?isLoanTx(t):isDebtTx(t)).forEach(t=>{
+      const sp=splits(t);
+      if(sp.length){
+        total += sp.filter(s=>s.category===account.name && ['Debt Payment','Loan Payment','Auto'].includes(String(s.treatment||'Auto'))).reduce((a,s)=>a+abs(s.amount),0);
+      } else {
+        const d=desc(t);
+        if(keys.some(k=>d.includes(k))) total += abs(t.amount);
+      }
+    });
+    return Math.round(total*100)/100;
+  }
+  function cardPaidMapStable(){ const out={}; (app.creditCards||[]).forEach(c=>out[c.name]=paidForAccount(c,'card')); return out; }
+  function loanPaidMapStable(){ const out={}; (app.loans||[]).forEach(l=>out[l.name]=paidForAccount(l,'loan')); return out; }
+  window.cardPaidMapV21 = cardPaidMapStable;
+  window.paidForScheduled = function(x){
+    if(x.kind==='card') return cardPaidMapStable()[x.name]||0;
+    if(x.kind==='loan') return loanPaidMapStable()[x.name]||0;
+    if(x.kind==='bill') return n((app.paidBills||{})[x.name]||0);
+    return 0;
+  };
+
+  function combinedBudgetRows(){
+    const rows=[];
+    (app.spendingBudgets||[]).forEach(b=>rows.push({name:b.name,friendly:b.friendly||b.name,budget:n(b.budget)}));
+    (app.bills||[]).forEach(b=>{ if(VARIABLE_NAMES.has(b.name) && !rows.some(r=>r.name===b.name)) rows.push({name:b.name,friendly:b.name,budget:n(b.amount)}); });
+    return rows;
+  }
+  function paycheckReceivedStable(p){
+    if(p.received===true || String(p.received).toLowerCase()==='true'){
+      // Future rows marked TRUE by stale sheet data should not hide future income unless a matching deposit exists.
+      if(String(p.date||'') > todayV()) return false;
+    }
+    const amt=abs(p.amount);
+    return txs().some(t=>inMonth(t) && isSchwab(t) && n(t.amount)>0 && Math.abs(abs(t.amount)-amt)<1.00);
+  }
+  window.paycheckReceived = paycheckReceivedStable;
+  window.receivedPaycheckV21 = paycheckReceivedStable;
+
+  function fixedScheduledFuture(){
+    const items=[];
+    (app.bills||[]).forEach(b=>{ if(!VARIABLE_NAMES.has(b.name)) items.push({kind:'bill',name:b.name,amount:n(b.amount),due:b.due,bucket:'Bills'}); });
+    (app.creditCards||[]).forEach(c=>items.push({kind:'card',name:c.name,amount:n(c.min),due:c.due,bucket:'Credit Cards'}));
+    (app.loans||[]).forEach(l=>items.push({kind:'loan',name:l.name,amount:n(l.min),due:l.due,bucket:'Loans'}));
+    return items.map(x=>({...x,paid:window.paidForScheduled(x),left:Math.max(0,n(x.amount)-window.paidForScheduled(x)),date:(app.month||'')+'-'+String(x.due||1).padStart(2,'0')})).filter(x=>x.left>0 && x.date>=todayV()).sort((a,b)=>a.date.localeCompare(b.date));
+  }
+  window.unpaidScheduledFuture = fixedScheduledFuture;
+
+  function remainingFridays(){
+    const out=[]; const [y,m]=month().split('-').map(Number); if(!y||!m) return out;
+    const end=new Date(y,m,0); let d=new Date(todayV()+'T00:00:00');
+    while(d<=end){ if(d.getDay()===5) out.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1); }
+    if(!out.length) out.push(todayV());
+    return out;
+  }
+  function reserveWeight(name){
+    if(['Groceries','Dog Food','Auto Fuel & Maintenance','Services','House Cleaning','Household Consumables'].includes(name)) return 1;
+    if(['Basic Health & Personal Care','Kids Miscellaneous','Kids Experiences','Date Nights','Alcohol & Entertainment','Household Miscellaneous'].includes(name)) return .65;
+    return 0;
+  }
+  function variableReserveEvents(){
+    const fridays=remainingFridays();
+    const reserves=[];
+    combinedBudgetRows().forEach(b=>{
+      if(FIXED_EXCLUDE_FROM_RESERVE.has(b.name)) return;
+      const weight=reserveWeight(b.name);
+      if(weight<=0) return;
+      const left=Math.max(0,n(b.budget)-txSpendByCategory(b.name));
+      const reserve=left*weight;
+      if(reserve>0.009) reserves.push({name:b.name, amount:reserve});
+    });
+    const total=reserves.reduce((a,x)=>a+x.amount,0);
+    if(total<=0) return [];
+    const per=total/fridays.length;
+    return fridays.map((date,idx)=>({date,name:'Variable spending reserve (probability-based)',amount:-(idx===fridays.length-1 ? total-per*(fridays.length-1) : per),type:'Reserve'}));
+  }
+  window.cashflowRows = function(){
+    let bal=latestSchwabBalanceStable();
+    const rows=[[todayV(),'Latest Schwab/current checking balance',0,bal,'Start']];
+    const events=[];
+    (app.paychecks||[]).forEach(p=>{ if(String(p.date||'')>=todayV() && !paycheckReceivedStable(p)) events.push({date:p.date,name:p.name,amount:n(p.amount),type:'Income'}); });
+    fixedScheduledFuture().forEach(x=>events.push({date:x.date,name:x.name+' ('+x.bucket+')',amount:-x.left,type:x.bucket}));
+    variableReserveEvents().forEach(e=>events.push(e));
+    events.sort((a,b)=>String(a.date).localeCompare(String(b.date)) || (b.amount-a.amount));
+    events.forEach(e=>{ bal+=n(e.amount); rows.push([e.date,e.name,e.amount,bal,bal<0?'Negative':bal<2500?'Low':'OK']); });
+    return rows;
+  };
+  window.renderCashflow = function(){
+    const table=document.getElementById('cashflowTable'); if(!table) return;
+    const totalReserve=variableReserveEvents().reduce((a,e)=>a+Math.abs(n(e.amount)),0);
+    table.innerHTML=`<tr><th colspan="5">Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve. Remaining variable reserve this month: ${money(totalReserve)}</th></tr>`+
+      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>'+
+      cashflowRows().map(r=>{ const cls=r[4]==='Negative'?'bad':r[4]==='Low'?'warn':'ok'; return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`; }).join('');
+  };
+
+  function renderTopAndDailyStable(){
+    const top=document.getElementById('topMetrics'); if(!top) return;
+    const budgets=combinedBudgetRows();
+    const totalBudget=budgets.reduce((a,b)=>a+n(b.budget),0);
+    const totalSpent=budgets.reduce((a,b)=>a+txSpendByCategory(b.name),0);
+    const left=totalBudget-totalSpent;
+    const sink=(app.sinkingFunds||[]).filter(f=>f.name!=='Debt Payoff').reduce((a,f)=>a+sinkingPositionStable(f),0);
+    const needs=txs().filter(t=>inMonth(t)&&t.category==='Needs Review').length;
+    const latest=txs().map((t,i)=>({t,i,k:key(t,i)})).filter(o=>isSchwab(o.t)&&inMonth(o.t)).sort((a,b)=>b.k.localeCompare(a.k))[0]?.t;
+    const checking=latestSchwabBalanceStable();
+    top.innerHTML=[
+      ['Checking now',money(checking),checking<2500?'warn':'ok'],
+      ['Monthly spend left',money(left),left<0?'bad':left<400?'warn':'ok'],
+      ['Sinking fund net',money(sink),sink<0?'bad':'ok'],
+      ['Needs review',needs,needs?'warn':'ok']
+    ].map(m=>`<div class="metric"><div class="label">${m[0]}</div><div class="value ${m[2]||''}">${m[1]}</div></div>`).join('');
+    document.getElementById('dataHealthV23')?.remove();
+
+    const rem=document.getElementById('remainingTable');
+    if(rem){ rem.innerHTML='<tr><th>Category</th><th class="num">Budget</th><th class="num">Net Spent</th><th class="num">Left</th><th>Progress</th></tr>'+budgets.map(b=>{ const spent=txSpendByCategory(b.name), remaining=n(b.budget)-spent, pct=b.budget?Math.max(0,Math.min(100,Math.round(spent/b.budget*100))):0; const cls=remaining<0?'bad':pct>80?'warn':''; return `<tr><td>${esc(b.friendly||b.name)}</td><td class="num">${money(b.budget)}</td><td class="num ${spent<0?'ok':''}">${money(spent)}</td><td class="num ${remaining<0?'bad':''}">${money(remaining)}</td><td><div class="progress"><div class="bar ${cls}" style="width:${pct}%"></div></div><div class="tiny">${pct}%</div></td></tr>`; }).join(''); }
+    const st=document.getElementById('sinkingPositionTable');
+    if(st){ st.innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned</th><th class="num">Actual / Contributed</th><th class="num">Spent</th><th class="num">Position</th></tr>'+(app.sinkingFunds||[]).map(f=>{ const actual=sinkingContributionStable(f.name), spent=f.name==='Debt Payoff'?0:txSpendByCategory(f.name), pos=sinkingPositionStable(f); return `<tr><td>${esc(f.name)}${f.name==='Debt Payoff'?'<div class="tiny">Explicit Debt Payoff Extra only</div>':''}</td><td class="num">${f.name==='Debt Payoff'?'—':money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(actual)}</td><td class="num">${f.name==='Debt Payoff'?'—':money(spent)}</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`; }).join(''); }
+  }
+  window.renderDailyStableV45=renderTopAndDailyStable;
+
+  const oldRenderDaily=window.renderDaily;
+  window.renderDaily=function(){ try{ if(typeof oldRenderDaily==='function') oldRenderDaily(); }catch(e){ console.warn('old renderDaily failed',e); } renderTopAndDailyStable(); document.body.classList.remove('v45-awaiting-sheet'); };
+  const oldRenderBudgets=window.renderBudgets;
+  window.renderBudgets=function(){ try{ if(typeof oldRenderBudgets==='function') oldRenderBudgets(); }catch(e){} const table=document.getElementById('sinkingTable'); if(table){ table.innerHTML='<tr><th>Fund</th><th class="num">Carried Balance</th><th class="num">Planned Monthly</th><th class="num">Actual / Contributed</th><th class="num">Spent This Month</th><th class="num">Current Position</th></tr>'+(app.sinkingFunds||[]).map(f=>{ const actual=sinkingContributionStable(f.name), spent=f.name==='Debt Payoff'?0:txSpendByCategory(f.name), pos=sinkingPositionStable(f); return `<tr><td>${esc(f.name)}${f.name==='Debt Payoff'?'<div class="tiny">Explicit Debt Payoff Extra only.</div>':''}</td><td class="num">${f.name==='Debt Payoff'?'—':money(f.balance)}</td><td class="num">${money(f.budget)}</td><td class="num">${money(actual)}</td><td class="num">${f.name==='Debt Payoff'?'—':money(spent)}</td><td class="num ${pos<0?'bad':'ok'}">${money(pos)}</td></tr>`; }).join(''); } };
+  const oldRenderDebts=window.renderDebts;
+  window.renderDebts=function(){
+    try{ if(typeof oldRenderDebts==='function') oldRenderDebts(); }catch(e){}
+    const pc=cardPaidMapStable(), pl=loanPaidMapStable();
+    const cc=document.getElementById('ccTable'); if(cc) cc.innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Min</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+(app.creditCards||[]).map(c=>`<tr><td>${esc(c.name)}</td><td class="num">${money(abs(c.owed))}</td><td class="num">${money(c.min)}</td><td class="num">${money(pc[c.name]||0)}</td><td>${esc(c.due)}</td><td class="num">${n(c.apr).toFixed(2)}%</td></tr>`).join('');
+    const lt=document.getElementById('loanTable'); if(lt) lt.innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Payment</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+(app.loans||[]).map(l=>`<tr><td>${esc(l.name)}</td><td class="num">${money(abs(l.owed))}</td><td class="num">${money(l.min)}</td><td class="num">${money(pl[l.name]||0)}</td><td>${esc(l.due)}</td><td class="num">${n(l.apr).toFixed(2)}%</td></tr>`).join('');
+  };
+
+  function setPlaceholders(){
+    const top=document.getElementById('topMetrics'); if(top) top.innerHTML=['Checking now','Monthly spend left','Sinking fund net','Needs review'].map(label=>`<div class="metric"><div class="label">${label}</div><div class="value loading-value">Loading</div></div>`).join('');
+    ['katyView','joeView'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML='<div class="small">Loading live Google Sheet data…</div>'; });
+  }
+  const prevLoad=window.loadFromSheet;
+  if(typeof prevLoad==='function'){
+    window.loadFromSheet=async function(){
+      document.body.classList.add('v45-awaiting-sheet'); setPlaceholders();
+      try{ const out=await prevLoad.apply(this,arguments); try{ renderCashflow(); renderDaily(); renderBudgets(); renderDebts(); }catch(e){} return out; }
+      finally{ document.body.classList.remove('v45-awaiting-sheet'); }
+    };
+  }
+  // If a sheet load is configured, show placeholders immediately so stale embedded data never appears as final truth.
+  try{ if(typeof getApiUrl==='function' && getApiUrl()) setPlaceholders(); else document.body.classList.remove('v45-awaiting-sheet'); }catch(e){ document.body.classList.remove('v45-awaiting-sheet'); }
+  setTimeout(()=>{
+    try{
+      const hasApi = (typeof getApiUrl==='function' && getApiUrl());
+      if(!hasApi){ renderCashflow(); renderDaily(); renderBudgets(); renderDebts(); document.body.classList.remove('v45-awaiting-sheet'); }
+    }catch(e){ document.body.classList.remove('v45-awaiting-sheet'); }
+  }, 2500);
+})();
+</script>
+
+
+
+
+<script>
+/* ===== v29 minimal repair guard =====
+   Removes the bad v47 layer, keeps v45 probability forecast, and prevents stale embedded data from showing while Google Sheets loads.
+*/
+(function(){
+  function setFourPlaceholders(){
+    const top=document.getElementById('topMetrics');
+    if(top) top.innerHTML=['Checking now','Monthly spend left','Sinking fund net','Needs review'].map(label=>`<div class="metric"><div class="label">${label}</div><div class="value loading-value">Loading</div></div>`).join('');
+    ['katyView','joeView'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML='<div class="small">Loading live Google Sheet data…</div>'; });
+  }
+  function hasApi(){ try{return typeof getApiUrl==='function' && !!getApiUrl();}catch(e){return false;} }
+  function renderAllSafe(){ try{ if(typeof renderCashflow==='function') renderCashflow(); if(typeof renderDaily==='function') renderDaily(); if(typeof renderBudgets==='function') renderBudgets(); if(typeof renderDebts==='function') renderDebts(); document.getElementById('dataHealthV23')?.remove(); }catch(e){ console.warn('renderAllSafe failed',e); } }
+  const priorLoad = typeof loadFromSheet==='function' ? loadFromSheet : null;
+  if(priorLoad){
+    loadFromSheet = async function(){
+      if(hasApi()){ document.body.classList.add('v45-awaiting-sheet'); setFourPlaceholders(); }
+      try{
+        const result = await priorLoad.apply(this, arguments);
+        renderAllSafe();
+        return result;
+      } finally {
+        document.body.classList.remove('v45-awaiting-sheet','loading');
+      }
+    };
+  }
+  if(hasApi()){
+    document.body.classList.add('v45-awaiting-sheet');
+    setFourPlaceholders();
+  } else {
+    document.body.classList.remove('v45-awaiting-sheet','loading');
+  }
+})();
+</script>
+
+
+<script>
+/* ===== v49: Cash Flow income repair ONLY =====
+   Fixes missing paycheck rows in Cash Flow without touching splits, debts, budgets, imports, or cards/loans/bills.
+   Problem: paychecks loaded from Sheets can have non-ISO dates, stale received flags, or missing rows.
+   Fix: normalize paycheck dates, fall back to the embedded paycheck schedule by name, and only hide a future paycheck if a real matching deposit exists.
+*/
+(function(){
+  function n49(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
+  function abs49(v){ return Math.abs(n49(v)); }
+  function today49(){
+    const raw = (app && app.today) ? app.today : new Date().toISOString().slice(0,10);
+    return normalizeDate49(raw) || String(raw).slice(0,10);
+  }
+  function normalizeDate49(value){
+    if(value === undefined || value === null || value === '') return '';
+    if(typeof value === 'number'){
+      // Google Sheets serial date fallback. 25569 = 1970-01-01.
+      const d = new Date(Math.round((value - 25569) * 86400 * 1000));
+      if(!Number.isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    }
+    const raw = String(value).trim();
+    let m = raw.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+    m = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+    if(m){
+      const y = m[3].length === 2 ? '20' + m[3] : m[3];
+      return `${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+    }
+    const d = new Date(raw);
+    if(!Number.isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    return raw.slice(0,10);
+  }
+  function initialPaychecks49(){
+    try { return (initialData && Array.isArray(initialData.paychecks)) ? initialData.paychecks : []; }
+    catch(e){ return []; }
+  }
+  function normalizedPaychecks49(){
+    const byName = new Map();
+    initialPaychecks49().forEach(p => {
+      if(p && p.name) byName.set(String(p.name), {...p, date: normalizeDate49(p.date), amount: n49(p.amount)});
+    });
+    (app.paychecks || []).forEach(p => {
+      if(!p) return;
+      const name = String(p.name || p.type || p.label || '').trim();
+      if(!name) return;
+      const fallback = byName.get(name) || {};
+      byName.set(name, {
+        ...fallback,
+        ...p,
+        name,
+        date: normalizeDate49(p.date || p.payDate || p.paymentDate || fallback.date),
+        amount: n49(p.amount || fallback.amount),
+        received: p.received
+      });
+    });
+    return [...byName.values()].filter(p => p.name && p.date && p.amount).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  }
+  function isSchwab49(t){ return String(t.source || t.account || '').toLowerCase().includes('schwab'); }
+  function inMonth49(t){ return String(t.date || '').slice(0,7) === String(app.month || '').slice(0,7); }
+  function realDepositExistsForPaycheck49(p){
+    const target = abs49(p.amount);
+    if(!target) return false;
+    return (app.transactions || []).some(t => {
+      const amt = n49(t.amount);
+      if(amt <= 0) return false;
+      if(!inMonth49(t)) return false;
+      if(!isSchwab49(t)) return false;
+      if(Math.abs(abs49(amt) - target) > 1.00) return false;
+      const desc = String(t.description || t.rawDescription || '').toLowerCase();
+      return desc.includes('payroll') || desc.includes('deposit') || desc.includes('direct dep') || desc.includes('marinemax') || true;
+    });
+  }
+  function paycheckShouldShowInCashflow49(p){
+    const pDate = normalizeDate49(p.date);
+    const tDate = today49();
+    if(!pDate || pDate < tDate) return false;
+    // Future stale TRUE/FALSE values from the sheet are not trusted. Only a real matching deposit hides income.
+    return !realDepositExistsForPaycheck49({...p, date:pDate});
+  }
+  function variableReserveEvents49(){
+    // Use the existing probability-reserve logic if present; otherwise no reserve. This avoids touching that model.
+    try {
+      if(typeof variableReserveEvents === 'function') return variableReserveEvents();
+    } catch(e) {}
+    return [];
+  }
+  function fixedScheduledFuture49(){
+    try {
+      if(typeof unpaidScheduledFuture === 'function') return unpaidScheduledFuture();
+    } catch(e) {}
+    return [];
+  }
+  function startingBalance49(){
+    try {
+      if(typeof latestSchwabBalanceStable === 'function') return n49(latestSchwabBalanceStable());
+      if(typeof currentCheckingBalanceV21 === 'function') return n49(currentCheckingBalanceV21());
+      if(typeof currentCheckingBalance === 'function') return n49(currentCheckingBalance());
+    } catch(e) {}
+    return n49(app.latestSchwabBalance);
+  }
 
   window.cashflowRows = function(){
-    const starting = typeof currentCheckingBalance === 'function' ? n(currentCheckingBalance()) : n(app.latestSchwabBalance);
-    let bal = starting;
-    const rows = [[todayIsoV55(), 'Latest Schwab/current checking balance', 0, bal, 'Start']];
+    let bal = startingBalance49();
+    const rows = [[today49(), 'Latest Schwab/current checking balance', 0, bal, 'Start']];
     const events = [];
 
-    window.futurePaycheckEventsV55().forEach(e => events.push(e));
-    unpaidScheduledBaseV55().forEach(x => events.push({date:isoDateV55(x.date), name:x.name + ' (' + x.bucket + ')', amount:-n(x.left), type:x.bucket}));
-    variableReserveEventsBaseV55().forEach(e => events.push({...e, date:isoDateV55(e.date)}));
+    normalizedPaychecks49().forEach(p => {
+      if(paycheckShouldShowInCashflow49(p)) events.push({date: normalizeDate49(p.date), name: p.name, amount: n49(p.amount), type: 'Income'});
+    });
+
+    fixedScheduledFuture49().forEach(x => events.push({date: normalizeDate49(x.date), name: x.name + ' (' + x.bucket + ')', amount: -n49(x.left), type: x.bucket}));
+    variableReserveEvents49().forEach(e => events.push({...e, date: normalizeDate49(e.date), amount: n49(e.amount)}));
 
     events
-      .filter(e => e.date && n(e.amount) !== 0)
-      .sort((a,b) => a.date.localeCompare(b.date) || (n(b.amount) - n(a.amount)))
+      .filter(e => e.date && e.date >= today49() && n49(e.amount) !== 0)
+      .sort((a,b) => String(a.date).localeCompare(String(b.date)) || (String(a.type)==='Income' ? -1 : 1))
       .forEach(e => {
-        bal += n(e.amount);
+        bal += n49(e.amount);
         rows.push([e.date, e.name, e.amount, bal, bal < 0 ? 'Negative' : bal < 2500 ? 'Low' : 'OK']);
       });
     return rows;
   };
 
-  if(typeof renderCashflow === 'function') renderCashflow();
+  window.renderCashflow = function(){
+    const table = document.getElementById('cashflowTable');
+    if(!table) return;
+    const reserveTotal = variableReserveEvents49().reduce((a,e)=>a+Math.abs(n49(e.amount)),0);
+    table.innerHTML = `<tr><th colspan="5">Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve. Remaining variable reserve this month: ${money(reserveTotal)}</th></tr>` +
+      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>' +
+      cashflowRows().map(r => {
+        const cls = r[4] === 'Negative' ? 'bad' : r[4] === 'Low' ? 'warn' : 'ok';
+        return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`;
+      }).join('');
+  };
+
+  try { renderCashflow(); } catch(e) { console.warn('v49 cashflow income repair render skipped', e); }
+})();
+</script>
+
+
+<script>
+/* ===== v57: Bills / Necessities confirmed-paid fix =====
+   Uses the current attached file only.
+   Fixed bills now calculate Confirmed Paid from actual current-month transactions
+   using bill category + paymentKeywords + description matching.
+   Variable necessities in this table (Groceries, Dog Food, Auto Fuel & Maintenance,
+   Basic Health & Personal Care, Services, House Cleaning) show actual month-to-date spending.
+*/
+(function(){
+  const VARIABLE_NECESSITIES_V57 = new Set([
+    'Groceries',
+    'Dog Food',
+    'Auto Fuel & Maintenance',
+    'Basic Health & Personal Care',
+    'House Cleaning',
+    'Services'
+  ]);
+
+  function num57(v){
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function month57(){
+    return String((window.app && app.month) || '').slice(0,7);
+  }
+
+  function currentMonthTx57(t){
+    const m = month57();
+    if(!m || !t) return false;
+    return String(t.date || '').slice(0,7) === m;
+  }
+
+  function norm57(s){
+    return String(s || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g,' ')
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+
+  function txText57(t){
+    return norm57([t.description, t.rawDescription, t.memo, t.name, t.merchant].filter(Boolean).join(' '));
+  }
+
+  function billKeywords57(bill){
+    const keys = [];
+    (bill.paymentKeywords || []).forEach(k => { if(k) keys.push(k); });
+    if(bill.name) keys.push(bill.name);
+
+    // Practical aliases for the names as they appear in imports / billpay rows.
+    const name = String(bill.name || '').toLowerCase();
+    if(name.includes('dominion')) keys.push('DOMINION ENERGY', 'DOMINION ENERGY BILLPAY', 'DOMINION');
+    if(name.includes('grange') || name.includes('car insurance')) keys.push('GRANGE INSURANCE', 'GRANGE INSURANCE PREM');
+    if(name.includes('hrsd')) keys.push('HRSD');
+    if(name.includes('virginia beach public utilities')) keys.push('VIRGINIA BEACH PUBLIC UTILITIES', 'VB PUBLIC UTILITIES');
+    if(name.includes('verizon')) keys.push('VERIZON');
+    if(name.includes('t-mobile')) keys.push('T MOBILE', 'TMOBILE');
+    if(name.includes('icloud')) keys.push('ICLOUD', 'APPLE ICLOUD');
+    if(name.includes('spotify')) keys.push('SPOTIFY');
+    if(name.includes('apple tv')) keys.push('APPLE TV');
+    if(name.includes('apple care')) keys.push('APPLE CARE', 'APPLECARE');
+
+    return [...new Set(keys.map(norm57).filter(Boolean))];
+  }
+
+  function splitBillPaid57(billName){
+    return (app.transactions || []).reduce((total, t) => {
+      if(!currentMonthTx57(t) || !Array.isArray(t.splits)) return total;
+      return total + t.splits.reduce((inner, s) => {
+        if(String(s.category || '') !== billName) return inner;
+        const treatment = String(s.treatment || 'Auto');
+        if(['Income','Ignore / Transfer','Reimbursement / Credit'].includes(treatment)) return inner;
+        return inner + Math.abs(num57(s.amount));
+      }, 0);
+    }, 0);
+  }
+
+  function fixedBillPaidFromTransactions57(bill){
+    const name = String(bill.name || '');
+    const keys = billKeywords57(bill);
+
+    const fromCategory = (app.transactions || []).reduce((total, t) => {
+      if(!currentMonthTx57(t)) return total;
+      if(String(t.category || '') !== name) return total;
+      const treatment = String(t.treatment || t.type || 'Auto');
+      if(['Income','Ignore / Transfer','Reimbursement / Credit'].includes(treatment)) return total;
+      return total + Math.abs(num57(t.amount));
+    }, 0);
+
+    const fromSplits = splitBillPaid57(name);
+
+    const fromKeywords = (app.transactions || []).reduce((total, t) => {
+      if(!currentMonthTx57(t)) return total;
+      const amt = num57(t.amount);
+      if(amt >= 0) return total; // fixed bills are checking/card outflows
+      const text = txText57(t);
+      if(!keys.some(k => text.includes(k))) return total;
+      return total + Math.abs(amt);
+    }, 0);
+
+    return Math.round(Math.max(fromCategory, fromSplits, fromKeywords, num57((app.paidBills || {})[name])) * 100) / 100;
+  }
+
+  function variableNecessityPaid57(bill){
+    const name = String(bill.name || '');
+    let spent = 0;
+    if(typeof window.txSpendByCategory === 'function'){
+      spent = Math.abs(num57(window.txSpendByCategory(name)));
+    }
+    if(spent <= 0){
+      spent = (app.transactions || []).reduce((total, t) => {
+        if(!currentMonthTx57(t)) return total;
+        if(String(t.category || '') !== name) return total;
+        const amt = num57(t.amount);
+        return total + Math.abs(amt);
+      }, 0);
+    }
+    return Math.round(spent * 100) / 100;
+  }
+
+  window.billPaidAmountV57 = function(bill){
+    if(!bill) return 0;
+    if(VARIABLE_NECESSITIES_V57.has(String(bill.name || ''))) return variableNecessityPaid57(bill);
+    return fixedBillPaidFromTransactions57(bill);
+  };
+
+  const previousPaidForScheduledV57 = window.paidForScheduled;
+  window.paidForScheduled = function(x){
+    if(x && x.kind === 'bill'){
+      const bill = (app.bills || []).find(b => b.name === x.name);
+      if(bill && !VARIABLE_NECESSITIES_V57.has(String(bill.name || ''))){
+        return window.billPaidAmountV57(bill);
+      }
+    }
+    return typeof previousPaidForScheduledV57 === 'function' ? previousPaidForScheduledV57(x) : 0;
+  };
+
+  const previousRenderDebtsV57 = window.renderDebts;
+  window.renderDebts = function(){
+    if(typeof previousRenderDebtsV57 === 'function') previousRenderDebtsV57.apply(this, arguments);
+
+    const billTable = document.getElementById('billTable');
+    if(!billTable) return;
+
+    billTable.innerHTML =
+      '<tr><th>Name</th><th class="num">Budget</th><th class="num">Confirmed Paid</th><th>Due</th></tr>' +
+      (app.bills || []).map(b => {
+        const paid = window.billPaidAmountV57(b);
+        const sub = VARIABLE_NECESSITIES_V57.has(String(b.name || ''))
+          ? '<div class="tiny">Month-to-date spending</div>'
+          : '';
+        return `<tr>
+          <td>${esc(b.name)}${sub}</td>
+          <td class="num">${money(b.amount)}</td>
+          <td class="num">${money(paid)}</td>
+          <td>${esc(b.due)}</td>
+        </tr>`;
+      }).join('');
+  };
+
+  try { renderDebts(); renderCashflow(); renderDaily(); } catch(e){ console.warn('v57 bill paid fix render skipped', e); }
+})();
+</script>
+
+
+
+<script>
+/* ===== v60: Credit Card confirmed-paid from split transactions =====
+   Built from the attached v59 file only.
+   Fixes Apple Card - Joe showing $0 when the payment transaction is split as:
+   - Debt Payoff / Debt Payoff Extra
+   - Debt Payment / Debt Payment
+   The earlier card matcher only counted split lines whose category was the exact card name, so your valid split was ignored.
+*/
+(function(){
+  function n60(v){
+    const n = Number(String(v ?? '').replace(/[$,]/g,''));
+    return Number.isFinite(n) ? n : 0;
+  }
+  function abs60(v){ return Math.abs(n60(v)); }
+  function cents60(v){ return Math.round(n60(v) * 100) / 100; }
+  function month60(){ return String((app && app.month) || '').slice(0,7); }
+  function currentMonth60(t){
+    const m = month60();
+    return !!(m && t && String(t.date || t.posted || '').slice(0,7) === m);
+  }
+  function norm60(s){
+    return String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+  }
+  function txText60(t){
+    return norm60([t.description,t.rawDescription,t.memo,t.name,t.merchant,t.payee,t.account,t.source].filter(Boolean).join(' '));
+  }
+  function cardKeys60(card){
+    const name = String(card && card.name || '');
+    const low = name.toLowerCase();
+    const keys = [];
+    (card && card.paymentKeywords || []).forEach(k => { if(k) keys.push(k); });
+    if(name) keys.push(name);
+    if(low.includes('apple card')) keys.push('APPLE CARD','APPLECARD','APPLECARD GSBANK','GSBANK');
+    if(low.includes('best buy')) keys.push('BEST BUY');
+    if(low.includes('lowes') || low.includes('lowe')) keys.push('LOWES','LOWE');
+    if(low.includes('chase') || low.includes('amazon prime')) keys.push('CHASE','CHASE CREDIT','CHASE CARD','AMAZON PRIME VISA');
+    if(low.includes('u.s. bank') || low.includes('us bank')) keys.push('US BANK','U S BANK','U.S. BANK');
+    return [...new Set(keys.map(norm60).filter(Boolean))];
+  }
+  function parentMatchesCard60(t, card){
+    const text = txText60(t);
+    const keys = cardKeys60(card);
+    if(keys.some(k => k && text.includes(k))) return true;
+
+    // Important for Apple Card exports: the payment row can be labeled only as
+    // "ACH Deposit Internet Transfer..." but the Source/Account is "Apple Card".
+    const cardName = String(card && card.name || '').toLowerCase();
+    const sourceAccount = String((t.source || '') + ' ' + (t.account || '')).toLowerCase();
+    if(cardName.includes('apple card') && sourceAccount.includes('apple card')) return true;
+
+    return false;
+  }
+  function splitTreatment60(s){ return String(s && (s.treatment || s.type) || 'Auto'); }
+  function txTreatment60(t){ return String(t && (t.treatment || t.type) || 'Auto'); }
+  function looksLikeCardPayment60(t){
+    const cat = String(t.category || '');
+    const treatment = txTreatment60(t);
+    const amount = n60(t.amount);
+    const text = txText60(t);
+    const hasPaymentWords = /PAYMENT|PYMT|ACH|AUTOPAY|AUTO PYMT|CARDMEMBER|GSBANK|APPLECARD/.test(text);
+    const hasDebtSplit = Array.isArray(t.splits) && t.splits.some(s => {
+      const st = splitTreatment60(s);
+      const sc = String(s.category || '');
+      return st === 'Debt Payment' || st === 'Debt Payoff Extra' || sc === 'Debt Payment' || sc === 'Debt Payoff';
+    });
+    return amount < 0 || cat === 'Debt Payment' || treatment === 'Debt Payment' || hasPaymentWords || hasDebtSplit;
+  }
+  function splitAmountForCard60(t, card){
+    if(!Array.isArray(t.splits) || !t.splits.length) return 0;
+
+    // 1) Exact-card split lines always count.
+    let total = t.splits.reduce((sum, s) => {
+      if(String(s.category || '') !== String(card.name || '')) return sum;
+      const st = splitTreatment60(s);
+      if(['Income','Ignore / Transfer','Reimbursement / Credit'].includes(st)) return sum;
+      return sum + abs60(s.amount);
+    }, 0);
+    if(total > 0) return total;
+
+    // 2) If the parent transaction is clearly this card's payment, count the payment-related split lines.
+    // This covers your Apple Card split where the minimum line category is "Debt Payment", not "Apple Card - Joe".
+    if(parentMatchesCard60(t, card) && looksLikeCardPayment60(t)){
+      total = t.splits.reduce((sum, s) => {
+        const st = splitTreatment60(s);
+        const sc = String(s.category || '');
+        if(st === 'Debt Payment' || st === 'Debt Payoff Extra' || sc === 'Debt Payment' || sc === 'Debt Payoff'){
+          return sum + abs60(s.amount);
+        }
+        return sum;
+      }, 0);
+    }
+    return total;
+  }
+  function cardPaidAmount60(card){
+    if(!card) return 0;
+    const fromTx = (app.transactions || []).reduce((total, t) => {
+      if(!currentMonth60(t)) return total;
+
+      const splitPaid = splitAmountForCard60(t, card);
+      if(splitPaid) return total + splitPaid;
+
+      if(!parentMatchesCard60(t, card)) return total;
+      if(!looksLikeCardPayment60(t)) return total;
+
+      return total + abs60(t.amount);
+    }, 0);
+
+    const saved = n60((app.paidCards || {})[card.name]);
+    return cents60(Math.max(fromTx, saved));
+  }
+  function cardPaidMap60(){
+    const out = {};
+    (app.creditCards || []).forEach(c => { out[c.name] = cardPaidAmount60(c); });
+    return out;
+  }
+
+  window.cardPaidAmountV60 = cardPaidAmount60;
+  window.cardPaidMapV60 = cardPaidMap60;
+  window.cardPaidMapV21 = cardPaidMap60;
+
+  const previousPaidForScheduledV60 = paidForScheduled;
+  paidForScheduled = function(x){
+    if(x && x.kind === 'card'){
+      const card = (app.creditCards || []).find(c => c.name === x.name);
+      if(card) return cardPaidAmount60(card);
+    }
+    return typeof previousPaidForScheduledV60 === 'function' ? previousPaidForScheduledV60(x) : 0;
+  };
+  window.paidForScheduled = paidForScheduled;
+
+  function renderCreditCards60(){
+    const ccTable = document.getElementById('ccTable');
+    if(!ccTable || !app || !Array.isArray(app.creditCards)) return;
+    ccTable.innerHTML =
+      '<tr><th>Name</th><th class="num">Owed</th><th class="num">Min</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>' +
+      app.creditCards.map(c => `<tr>
+        <td>${esc(c.name)}</td>
+        <td class="num">${money(Math.abs(n60(c.owed)))}</td>
+        <td class="num">${money(c.min)}</td>
+        <td class="num">${money(cardPaidAmount60(c))}</td>
+        <td>${esc(c.due)}</td>
+        <td class="num">${Number(c.apr || 0).toFixed(2)}%</td>
+      </tr>`).join('');
+    ccTable.dataset.v60Fixed = String(Date.now());
+  }
+
+  const previousRenderDebtsV60 = renderDebts;
+  renderDebts = function(){
+    if(typeof previousRenderDebtsV60 === 'function') previousRenderDebtsV60.apply(this, arguments);
+    renderCreditCards60();
+  };
+  window.renderDebts = renderDebts;
+
+  const previousRenderV60 = render;
+  render = function(){
+    const result = previousRenderV60.apply(this, arguments);
+    renderCreditCards60();
+    return result;
+  };
+  window.render = render;
+
+  const previousLoadFromSheetV60 = loadFromSheet;
+  loadFromSheet = async function(){
+    const result = await previousLoadFromSheetV60.apply(this, arguments);
+    renderCreditCards60();
+    try { renderCashflow(); renderDaily(); } catch(e){ console.warn('v60 post-load dependent render skipped', e); }
+    renderCreditCards60();
+    return result;
+  };
+  window.loadFromSheet = loadFromSheet;
+
+  try { renderDebts(); } catch(e){ console.warn('v60 credit-card confirmed-paid render skipped', e); }
 })();
 </script>
 
 </body></html>
+<script>
+/* ===== v50: Cash Flow full forecast repair ONLY =====
+   Restores the complete Cash Flow model after the v49 income-only patch:
+   - future paychecks
+   - unpaid fixed bills / credit-card minimums / loan payments
+   - probability-based variable spending reserve
+   - remaining planned sinking-fund contributions
+   This patch only overrides cashflowRows() and renderCashflow().
+*/
+(function(){
+  function n50(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
+  function abs50(v){ return Math.abs(n50(v)); }
+  function month50(){ return String((app && app.month) || new Date().toISOString().slice(0,7)).slice(0,7); }
+  function normalizeDate50(value){
+    if(value === undefined || value === null || value === '') return '';
+    if(typeof value === 'number'){
+      const d = new Date(Math.round((value - 25569) * 86400 * 1000));
+      if(!Number.isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    }
+    const raw = String(value).trim();
+    let m = raw.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+    m = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+    if(m){ const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`; }
+    const d = new Date(raw);
+    if(!Number.isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    return raw.slice(0,10);
+  }
+  function today50(){ return normalizeDate50((app && app.today) || new Date().toISOString().slice(0,10)); }
+  function dateFromDue50(due){ return `${month50()}-${String(due || 1).padStart(2,'0')}`; }
+  function isSchwab50(t){ return String(t.source || t.account || '').toLowerCase().includes('schwab'); }
+  function inMonth50(t){ return String(normalizeDate50(t.date || t.posted || '')).slice(0,7) === month50(); }
+  function startingBalance50(){
+    try { if(typeof latestSchwabBalanceStable === 'function') return n50(latestSchwabBalanceStable()); } catch(e) {}
+    try { if(typeof currentCheckingBalanceV21 === 'function') return n50(currentCheckingBalanceV21()); } catch(e) {}
+    try { if(typeof currentCheckingBalance === 'function') return n50(currentCheckingBalance()); } catch(e) {}
+    const rows = (app.transactions || [])
+      .map((t,i)=>({t,i,date:normalizeDate50(t.date || t.posted || '')}))
+      .filter(o=>isSchwab50(o.t) && o.t.runningBalance !== undefined && o.t.runningBalance !== null && o.t.runningBalance !== '')
+      .sort((a,b)=>(b.date + '|' + String(b.i).padStart(6,'0')).localeCompare(a.date + '|' + String(a.i).padStart(6,'0')));
+    if(rows.length) return n50(rows[0].t.runningBalance);
+    return n50(app.latestSchwabBalance);
+  }
+  function normalizedPaychecks50(){
+    const byName = new Map();
+    try { (initialData.paychecks || []).forEach(p=>{ if(p && p.name) byName.set(String(p.name), {...p, date:normalizeDate50(p.date), amount:n50(p.amount)}); }); } catch(e) {}
+    (app.paychecks || []).forEach(p=>{
+      const name = String(p?.name || p?.type || p?.label || '').trim();
+      if(!name) return;
+      const fallback = byName.get(name) || {};
+      byName.set(name, {...fallback, ...p, name, date:normalizeDate50(p.date || p.payDate || p.paymentDate || fallback.date), amount:n50(p.amount || fallback.amount)});
+    });
+    return [...byName.values()].filter(p=>p.name && p.date && p.amount).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  }
+  function realDepositExistsForPaycheck50(p){
+    const target = abs50(p.amount);
+    if(!target) return false;
+    return (app.transactions || []).some(t=>{
+      const amt = n50(t.amount);
+      if(amt <= 0 || !isSchwab50(t) || !inMonth50(t)) return false;
+      return Math.abs(abs50(amt) - target) <= 1.00;
+    });
+  }
+  function futurePaycheckEvents50(){
+    const tdy = today50();
+    return normalizedPaychecks50()
+      .filter(p=>p.date >= tdy && !realDepositExistsForPaycheck50(p))
+      .map(p=>({date:p.date, name:p.name, amount:n50(p.amount), type:'Income', priority:0}));
+  }
+  const VARIABLE_NAMES_50 = new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']);
+  function paidFor50(x){ try { if(typeof paidForScheduled === 'function') return n50(paidForScheduled(x)); } catch(e) {} return 0; }
+  function fixedScheduledEvents50(){
+    const items=[];
+    (app.bills || []).forEach(b=>{ if(!VARIABLE_NAMES_50.has(b.name)) items.push({kind:'bill', name:b.name, amount:n50(b.amount), due:b.due, bucket:'Bills'}); });
+    (app.creditCards || []).forEach(c=>items.push({kind:'card', name:c.name, amount:n50(c.min), due:c.due, bucket:'Credit Cards'}));
+    (app.loans || []).forEach(l=>items.push({kind:'loan', name:l.name, amount:n50(l.min), due:l.due, bucket:'Loans'}));
+    return items.map(x=>{
+      const paid = paidFor50(x);
+      return {...x, paid, left:Math.max(0, n50(x.amount)-paid), date:dateFromDue50(x.due)};
+    }).filter(x=>x.left > 0.009 && x.date >= today50()).map(x=>({date:x.date, name:`${x.name} (${x.bucket})`, amount:-x.left, type:x.bucket, priority:1}));
+  }
+  function txSpend50(cat){
+    try { if(typeof txSpendByCategory === 'function') return n50(txSpendByCategory(cat)); } catch(e) {}
+    return 0;
+  }
+  function combinedBudgetRows50(){
+    const rows=[];
+    (app.spendingBudgets || []).forEach(b=>rows.push({name:b.name, budget:n50(b.budget)}));
+    (app.bills || []).forEach(b=>{ if(VARIABLE_NAMES_50.has(b.name) && !rows.some(r=>r.name===b.name)) rows.push({name:b.name, budget:n50(b.amount)}); });
+    return rows;
+  }
+  function reserveWeight50(name){
+    if(['Groceries','Dog Food','Auto Fuel & Maintenance','Services','House Cleaning','Household Consumables'].includes(name)) return 1;
+    if(['Basic Health & Personal Care','Kids Miscellaneous','Kids Experiences','Date Nights','Alcohol & Entertainment','Household Miscellaneous'].includes(name)) return 0.65;
+    return 0;
+  }
+  function remainingFridays50(){
+    const out=[]; const [y,m]=month50().split('-').map(Number); if(!y || !m) return [today50()];
+    const end = new Date(y, m, 0);
+    const d = new Date(today50() + 'T00:00:00');
+    while(d <= end){ if(d.getDay() === 5) out.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1); }
+    return out.length ? out : [today50()];
+  }
+  function variableReserveEvents50(){
+    const reserves=[];
+    combinedBudgetRows50().forEach(b=>{
+      const weight = reserveWeight50(b.name);
+      if(weight <= 0) return;
+      const left = Math.max(0, n50(b.budget) - txSpend50(b.name));
+      const reserve = left * weight;
+      if(reserve > 0.009) reserves.push({name:b.name, amount:reserve});
+    });
+    const total = reserves.reduce((a,x)=>a+x.amount,0);
+    if(total <= 0) return [];
+    const fridays = remainingFridays50();
+    const per = total / fridays.length;
+    return fridays.map((date,idx)=>({date, name:'Variable spending reserve (probability-based)', amount:-(idx===fridays.length-1 ? total - per*(fridays.length-1) : per), type:'Reserve', priority:2}));
+  }
+  function splitContribution50(fundName){
+    return (app.transactions || []).filter(t=>inMonth50(t)).reduce((total,t)=>{
+      const splits = Array.isArray(t.splits) ? t.splits : [];
+      if(splits.length){
+        return total + splits.filter(s=>s.category===fundName && s.treatment==='Sinking Fund Contribution').reduce((a,s)=>a+abs50(s.amount),0);
+      }
+      const tr = t.treatment || t.type || 'Auto';
+      if(t.category === fundName && tr === 'Sinking Fund Contribution') return total + abs50(t.amount);
+      return total;
+    },0);
+  }
+  function remainingSinkingContribution50(f){
+    if(!f || String(f.name || '').trim() === 'Debt Payoff') return 0;
+    const already = n50(f.saved) + splitContribution50(f.name);
+    return Math.max(0, n50(f.budget) - already);
+  }
+  function sinkingFundContributionEvents50(){
+    const remainingFunds = (app.sinkingFunds || [])
+      .map(f=>({name:f.name, amount:remainingSinkingContribution50(f)}))
+      .filter(f=>f.amount > 0.009);
+    if(!remainingFunds.length) return [];
+
+    const payDates = futurePaycheckEvents50().map(e=>e.date).filter(d=>d>=today50());
+    const dates = payDates.length ? payDates : [remainingFridays50()[0] || today50()];
+    const events=[];
+    remainingFunds.forEach(f=>{
+      const per = f.amount / dates.length;
+      dates.forEach((date,idx)=>{
+        const amount = idx===dates.length-1 ? f.amount - per*(dates.length-1) : per;
+        if(amount > 0.009) events.push({date, name:`${f.name} sinking fund contribution`, amount:-amount, type:'Sinking Fund', priority:3});
+      });
+    });
+    return events;
+  }
+  function allCashflowEvents50(){
+    return [
+      ...futurePaycheckEvents50(),
+      ...fixedScheduledEvents50(),
+      ...variableReserveEvents50(),
+      ...sinkingFundContributionEvents50()
+    ].filter(e=>e.date && e.date >= today50() && n50(e.amount)!==0)
+     .sort((a,b)=>String(a.date).localeCompare(String(b.date)) || n50(a.priority)-n50(b.priority) || String(a.name).localeCompare(String(b.name)));
+  }
+
+  window.cashflowRows = function(){
+    let bal = startingBalance50();
+    const rows = [[today50(), 'Latest Schwab/current checking balance', 0, bal, 'Start']];
+    allCashflowEvents50().forEach(e=>{
+      bal += n50(e.amount);
+      rows.push([e.date, e.name, e.amount, bal, bal < 0 ? 'Negative' : bal < 2500 ? 'Low' : 'OK']);
+    });
+    return rows;
+  };
+
+  window.renderCashflow = function(){
+    const table=document.getElementById('cashflowTable');
+    if(!table) return;
+    const variableReserveTotal = variableReserveEvents50().reduce((a,e)=>a+abs50(e.amount),0);
+    const sinkingContributionTotal = sinkingFundContributionEvents50().reduce((a,e)=>a+abs50(e.amount),0);
+    table.innerHTML = `<tr><th colspan="5">Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve + planned sinking-fund contributions. Remaining variable reserve: ${money(variableReserveTotal)} | Remaining sinking-fund contributions: ${money(sinkingContributionTotal)}</th></tr>` +
+      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>' +
+      cashflowRows().map(r=>{ const cls=r[4]==='Negative'?'bad':r[4]==='Low'?'warn':'ok'; return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`; }).join('');
+  };
+
+  try { renderCashflow(); } catch(e) { console.warn('v50 full cashflow repair render skipped', e); }
+})();
+</script>
+
+<script>
+/* ===== v51: Loan confirmed-paid allocation fix ONLY =====
+   Problem fixed: Mortgage and HELOC share the same Schwab/NFCU description, so the old matcher
+   counted both NFCU loan transactions for both loans. This patch allocates each unsplit loan
+   payment to exactly one loan using the closest expected/minimum payment amount.
+*/
+(function(){
+  function numV51(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
+  function absV51(v){ return Math.abs(numV51(v)); }
+  function upperV51(s){ return String(s||'').toUpperCase(); }
+  function txDescV51(t){ return upperV51((t?.rawDescription||'')+' '+(t?.description||'')); }
+  function inMonthV51(t){
+    if(typeof currentMonthTxV21 === 'function') return currentMonthTxV21(t);
+    if(typeof inBudgetMonth === 'function') return inBudgetMonth(t);
+    return String(t?.date||'').slice(0,7) === String(app?.month||'');
+  }
+  function splitsV51(t){ return Array.isArray(t?.splits) ? t.splits : []; }
+  function loanKeysV51(loan){
+    const keys=[...(loan.paymentKeywords||[]), loan.name||''];
+    const name=upperV51(loan.name||'');
+    if(name.includes('MORTGAGE') || name.includes('NAVY')) keys.push('NFCU MORT DEBIT');
+    if(name.includes('HELOC')) keys.push('NFCU MORT DEBIT');
+    if(name.includes('BRIDGECREST')) keys.push('BRIDGECREST');
+    if(name.includes('WELLS FARGO')) keys.push('WELLS FARGO');
+    if(name.includes('APPLE WATCH')) keys.push('APPLE WATCH');
+    return [...new Set(keys.map(upperV51).filter(Boolean))];
+  }
+  function isLoanPaymentTxV51(t){
+    if(!inMonthV51(t)) return false;
+    const cat=String(t.category||'');
+    const treatment=String(t.treatment||'');
+    const d=txDescV51(t);
+    return cat==='Loan Payment' || treatment==='Loan Payment' || /NFCU MORT|BRIDGECREST|WELLS FARGO|APPLE WATCH/.test(d);
+  }
+  function expectedLoanPaymentV51(loan){
+    return absV51(loan.expected || loan.min || loan.payment || 0);
+  }
+  function loanPaidMapV51(){
+    const loans=app.loans||[];
+    const out={};
+    loans.forEach(l=>out[l.name]=0);
+
+    // 1) Exact split rows win. A split category names the loan directly, so no guessing.
+    (app.transactions||[]).filter(isLoanPaymentTxV51).forEach(t=>{
+      const sp=splitsV51(t);
+      if(!sp.length) return;
+      sp.forEach(s=>{
+        if(out[s.category] !== undefined && ['Loan Payment','Auto',''].includes(String(s.treatment||'Auto'))){
+          out[s.category] += absV51(s.amount);
+        }
+      });
+    });
+
+    // 2) For unsplit loan-payment transactions, assign each transaction to ONE best loan.
+    // This is the actual fix for Mortgage + HELOC sharing “NFCU MORT DEBIT”.
+    (app.transactions||[]).filter(t=>isLoanPaymentTxV51(t) && !splitsV51(t).length).forEach(t=>{
+      const d=txDescV51(t);
+      const amt=absV51(t.amount);
+      if(!amt) return;
+
+      const candidates=loans.filter(l=>loanKeysV51(l).some(k=>d.includes(k)));
+      if(!candidates.length) return;
+
+      let winner=candidates[0];
+      let bestDiff=Math.abs(amt-expectedLoanPaymentV51(winner));
+      candidates.forEach(l=>{
+        const diff=Math.abs(amt-expectedLoanPaymentV51(l));
+        if(diff < bestDiff){ winner=l; bestDiff=diff; }
+      });
+      out[winner.name] = (out[winner.name]||0) + amt;
+    });
+
+    // 3) Fallback: if no matching transaction was found for a loan, keep the Sheet-provided paidLoans value.
+    loans.forEach(l=>{
+      if((out[l.name]||0) <= 0 && app.paidLoans && numV51(app.paidLoans[l.name]) > 0){
+        out[l.name] = numV51(app.paidLoans[l.name]);
+      }
+      out[l.name] = Math.round((out[l.name]||0)*100)/100;
+    });
+    return out;
+  }
+
+  window.loanPaidMapStable = loanPaidMapV51;
+
+  const previousPaidForScheduledV51 = window.paidForScheduled;
+  window.paidForScheduled = function(x){
+    if(x && x.kind==='loan') return loanPaidMapV51()[x.name] || 0;
+    return typeof previousPaidForScheduledV51 === 'function' ? previousPaidForScheduledV51(x) : 0;
+  };
+
+  const previousRenderDebtsV51 = window.renderDebts;
+  window.renderDebts = function(){
+    if(typeof previousRenderDebtsV51 === 'function') previousRenderDebtsV51();
+    const table=document.getElementById('loanTable');
+    if(!table) return;
+    const paid=loanPaidMapV51();
+    table.innerHTML='<tr><th>Name</th><th class="num">Owed</th><th class="num">Payment</th><th class="num">Confirmed Paid</th><th>Due</th><th class="num">APR</th></tr>'+
+      (app.loans||[]).map(l=>`<tr><td>${esc(l.name)}</td><td class="num">${money(absV51(l.owed))}</td><td class="num">${money(l.min)}</td><td class="num">${money(paid[l.name]||0)}</td><td>${esc(l.due)}</td><td class="num">${numV51(l.apr).toFixed(2)}%</td></tr>`).join('');
+  };
+
+  try { renderDebts(); renderCashflow(); renderDaily(); } catch(e){ console.warn('v51 loan paid fix render skipped', e); }
+})();
+</script>
+
+<script>
+/* ===== v53: Cash-flow carryover safety buffer =====
+   Fixes the probability forecast marking an end-of-month balance as OK when it is
+   technically above $2,500 but not enough to survive the first few days of next month.
+   The OK threshold is now: minimum checking buffer + expected cash needed in days 1-6
+   of next month for fixed bills/debt/loans + probability-based variable spending.
+*/
+(function(){
+  const previousCashflowRowsV53 = window.cashflowRows;
+  const previousRenderCashflowV53 = window.renderCashflow;
+  const EARLY_MONTH_DAYS_V53 = 6;
+
+  function n53(v){ const n=Number(v); return Number.isFinite(n) ? n : 0; }
+  function abs53(v){ return Math.abs(n53(v)); }
+  function month53(){ return String((app && app.month) || new Date().toISOString().slice(0,7)).slice(0,7); }
+  function minimumBuffer53(){
+    if(typeof minimumCheckingBuffer === 'function') return n53(minimumCheckingBuffer()) || 2500;
+    return n53(app.minimumCheckingBuffer || app.buffer || app.minCheckingBuffer || 2500) || 2500;
+  }
+  function nextMonth53(month){
+    const [y,m] = String(month || month53()).split('-').map(Number);
+    const d = new Date(y || new Date().getFullYear(), m || 1, 1);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  }
+  function daysInMonth53(month){
+    const [y,m] = String(month || month53()).split('-').map(Number);
+    if(!y || !m) return 30;
+    return new Date(y, m, 0).getDate();
+  }
+  function monthEndDate53(month){
+    const [y,m] = String(month || month53()).split('-').map(Number);
+    const d = new Date(y || new Date().getFullYear(), m || 1, 0);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  function variableNames53(){
+    return new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']);
+  }
+  function reserveWeight53(name){
+    if(['Groceries','Dog Food','Auto Fuel & Maintenance','Services','House Cleaning','Household Consumables'].includes(name)) return 1;
+    if(['Basic Health & Personal Care','Kids Miscellaneous','Kids Experiences','Date Nights','Alcohol & Entertainment','Household Miscellaneous'].includes(name)) return 0.65;
+    return 0;
+  }
+  function fixedEarlyNextMonthNeed53(){
+    const variable = variableNames53();
+    let total = 0;
+    (app.bills || []).forEach(b=>{
+      const due = Number(b.due) || 1;
+      if(due <= EARLY_MONTH_DAYS_V53 && !variable.has(b.name)) total += abs53(b.amount);
+    });
+    (app.creditCards || []).forEach(c=>{
+      const due = Number(c.due) || 1;
+      if(due <= EARLY_MONTH_DAYS_V53) total += abs53(c.min);
+    });
+    (app.loans || []).forEach(l=>{
+      const due = Number(l.due) || 1;
+      if(due <= EARLY_MONTH_DAYS_V53) total += abs53(l.min);
+    });
+    return Math.round(total * 100) / 100;
+  }
+  function earlyVariableNeed53(){
+    const days = EARLY_MONTH_DAYS_V53;
+    const dim = daysInMonth53(nextMonth53());
+    const rows=[];
+    (app.spendingBudgets || []).forEach(b=>rows.push({name:b.name, budget:n53(b.budget)}));
+    (app.bills || []).forEach(b=>{
+      if(variableNames53().has(b.name) && !rows.some(r=>r.name===b.name)) rows.push({name:b.name, budget:n53(b.amount)});
+    });
+    const total = rows.reduce((a,b)=>a + (n53(b.budget) * reserveWeight53(b.name) * days / dim), 0);
+    return Math.round(total * 100) / 100;
+  }
+  function earlyNextMonthNeed53(){
+    return {
+      fixed: fixedEarlyNextMonthNeed53(),
+      variable: earlyVariableNeed53()
+    };
+  }
+  function carryoverFloor53(){
+    const need = earlyNextMonthNeed53();
+    return Math.round((minimumBuffer53() + need.fixed + need.variable) * 100) / 100;
+  }
+  function statusForBalance53(balance){
+    const bal = n53(balance);
+    if(bal < 0) return 'Negative';
+    if(bal < minimumBuffer53()) return 'Low';
+    if(bal < carryoverFloor53()) return 'Carryover Risk';
+    return 'OK';
+  }
+  function statusClass53(status){
+    if(status === 'Negative') return 'bad';
+    if(status === 'Low' || status === 'Carryover Risk') return 'warn';
+    return 'ok';
+  }
+  window.cashflowCarryoverNeedV53 = function(){
+    const need = earlyNextMonthNeed53();
+    return {
+      fixed: need.fixed,
+      variable: need.variable,
+      minimumBuffer: minimumBuffer53(),
+      totalFloor: carryoverFloor53(),
+      firstDays: EARLY_MONTH_DAYS_V53,
+      nextMonth: nextMonth53()
+    };
+  };
+
+  window.cashflowRows = function(){
+    const baseRows = (typeof previousCashflowRowsV53 === 'function') ? previousCashflowRowsV53() : [];
+    const rows = baseRows.map(r=>[r[0], r[1], r[2], r[3], statusForBalance53(r[3])]);
+    if(rows.length){
+      const last = rows[rows.length - 1];
+      const endDate = monthEndDate53(month53());
+      const carry = window.cashflowCarryoverNeedV53();
+      rows.push([
+        endDate,
+        `Next-month first-${carry.firstDays}-days reserve check`,
+        0,
+        last[3],
+        statusForBalance53(last[3])
+      ]);
+    }
+    return rows;
+  };
+
+  window.renderCashflow = function(){
+    const table = document.getElementById('cashflowTable');
+    if(!table) return;
+    const carry = window.cashflowCarryoverNeedV53();
+    let variableReserveTotal = 0;
+    let sinkingContributionTotal = 0;
+    try {
+      // Pull these from the rendered v50 model when possible by deriving from row names.
+      const baseRows = (typeof previousCashflowRowsV53 === 'function') ? previousCashflowRowsV53() : [];
+      variableReserveTotal = baseRows.filter(r=>String(r[1]).includes('Variable spending reserve')).reduce((a,r)=>a+abs53(r[2]),0);
+      sinkingContributionTotal = baseRows.filter(r=>String(r[1]).includes('sinking fund contribution')).reduce((a,r)=>a+abs53(r[2]),0);
+    } catch(e) {}
+    table.innerHTML =
+      `<tr><th colspan="5">Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve + planned sinking-fund contributions. Remaining variable reserve: ${money(variableReserveTotal)} | Remaining sinking-fund contributions: ${money(sinkingContributionTotal)}</th></tr>` +
+      `<tr><th colspan="5">Carryover safety rule: OK now requires ${money(carry.totalFloor)} ending checking (${money(carry.minimumBuffer)} buffer + ${money(carry.fixed)} fixed/debt due in first ${carry.firstDays} days of ${carry.nextMonth} + ${money(carry.variable)} estimated variable spending). Anything below that is Carryover Risk, even if it is above ${money(carry.minimumBuffer)}.</th></tr>` +
+      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>' +
+      cashflowRows().map(r=>{
+        const cls = statusClass53(r[4]);
+        return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`;
+      }).join('');
+  };
+
+  try { renderCashflow(); } catch(e){ console.warn('v53 carryover cashflow patch render skipped', e); }
+})();
+</script>
+
+
+<script>
+/* ===== v54: Cash Flow Katy paycheck repair ONLY =====
+   Source: this attached index-v40.html only.
+   Issue fixed: future Katy paychecks were being hidden because the paycheck matcher
+   saw Katy's already-received 6/5 deposit and treated it as proof that the later
+   same-amount Katy paycheck was also received.
+   This patch only adjusts Cash Flow rows/rendering by adding any missing future
+   paycheck event whose matching real Schwab deposit is NOT on/after that paycheck date.
+*/
+(function(){
+  const previousCashflowRowsV54 = window.cashflowRows;
+
+  function n54(v){ const n=Number(v); return Number.isFinite(n) ? n : 0; }
+  function abs54(v){ return Math.abs(n54(v)); }
+  function normDate54(value){
+    if(value === undefined || value === null || value === '') return '';
+    if(typeof value === 'number'){
+      const d = new Date(Math.round((value - 25569) * 86400 * 1000));
+      if(!Number.isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    }
+    const raw = String(value).trim();
+    let m = raw.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+    m = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+    if(m){
+      const y = m[3].length === 2 ? '20' + m[3] : m[3];
+      return `${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+    }
+    const d = new Date(raw);
+    if(!Number.isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    return raw.slice(0,10);
+  }
+  function today54(){ return normDate54((app && app.today) || new Date().toISOString().slice(0,10)); }
+  function monthEnd54(){
+    const month = String((app && app.month) || today54().slice(0,7)).slice(0,7);
+    const [y,m] = month.split('-').map(Number);
+    const d = new Date(y || new Date().getFullYear(), m || 1, 0);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  function isSchwab54(t){ return String(t.source || t.account || '').toLowerCase().includes('schwab'); }
+  function sameMonth54(date){ return String(normDate54(date)).slice(0,7) === String((app && app.month) || '').slice(0,7); }
+
+  function normalizedPaychecks54(){
+    const byName = new Map();
+    try {
+      (initialData.paychecks || []).forEach(p=>{
+        if(!p || !p.name) return;
+        byName.set(String(p.name), {...p, name:String(p.name), date:normDate54(p.date), amount:n54(p.amount)});
+      });
+    } catch(e) {}
+    (app.paychecks || []).forEach(p=>{
+      if(!p) return;
+      const name = String(p.name || p.type || p.label || '').trim();
+      if(!name) return;
+      const fallback = byName.get(name) || {};
+      byName.set(name, {
+        ...fallback,
+        ...p,
+        name,
+        date: normDate54(p.date || p.payDate || p.paymentDate || fallback.date),
+        amount: n54(p.amount || fallback.amount),
+        received: p.received
+      });
+    });
+    return [...byName.values()].filter(p=>p.name && p.date && p.amount).sort((a,b)=>String(a.date).localeCompare(String(b.date)) || String(a.name).localeCompare(String(b.name)));
+  }
+
+  function realDepositOnOrAfterPaycheck54(p){
+    const target = abs54(p.amount);
+    const pDate = normDate54(p.date);
+    if(!target || !pDate) return false;
+    return (app.transactions || []).some(t=>{
+      const txDate = normDate54(t.date || t.posted || '');
+      const amt = n54(t.amount);
+      if(!txDate || txDate < pDate) return false; // critical fix: earlier same-amount paycheck does not hide a later one
+      if(!sameMonth54(txDate)) return false;
+      if(!isSchwab54(t)) return false;
+      if(amt <= 0) return false;
+      return Math.abs(abs54(amt) - target) <= 1.00;
+    });
+  }
+
+  function missingFuturePaychecks54(existingRows){
+    const today = today54();
+    const existingNames = new Set((existingRows || []).map(r=>String(r[1] || '').trim()));
+    return normalizedPaychecks54()
+      .filter(p=>p.date >= today)
+      .filter(p=>!existingNames.has(p.name))
+      .filter(p=>!realDepositOnOrAfterPaycheck54(p))
+      .map(p=>({date:p.date, name:p.name, amount:n54(p.amount), priority:0}));
+  }
+
+  function statusForBalance54(balance){
+    const bal = n54(balance);
+    let floor = 2500;
+    try { if(window.cashflowCarryoverNeedV53) floor = n54(window.cashflowCarryoverNeedV53().totalFloor) || floor; } catch(e) {}
+    let min = 2500;
+    try { if(window.cashflowCarryoverNeedV53) min = n54(window.cashflowCarryoverNeedV53().minimumBuffer) || min; } catch(e) {}
+    if(bal < 0) return 'Negative';
+    if(bal < min) return 'Low';
+    if(bal < floor) return 'Carryover Risk';
+    return 'OK';
+  }
+  function statusClass54(status){
+    if(status === 'Negative') return 'bad';
+    if(status === 'Low' || status === 'Carryover Risk') return 'warn';
+    return 'ok';
+  }
+
+  window.cashflowRows = function(){
+    const base = (typeof previousCashflowRowsV54 === 'function') ? previousCashflowRowsV54() : [];
+    if(!base.length) return base;
+
+    const start = base[0];
+    const reserveCheckName = 'Next-month first-';
+    const normalRows = base.slice(1).filter(r=>!String(r[1] || '').startsWith(reserveCheckName));
+    const additions = missingFuturePaychecks54(base);
+
+    if(!additions.length) return base.map(r=>[r[0], r[1], r[2], r[3], statusForBalance54(r[3])]);
+
+    const events = normalRows.map((r,idx)=>({date:normDate54(r[0]), name:r[1], amount:n54(r[2]), priority:String(r[1]).includes('Paycheck') ? 0 : 5, originalIndex:idx}))
+      .concat(additions.map((e,idx)=>({...e, originalIndex:-1000+idx})));
+
+    events.sort((a,b)=>String(a.date).localeCompare(String(b.date)) || n54(a.priority)-n54(b.priority) || n54(a.originalIndex)-n54(b.originalIndex) || String(a.name).localeCompare(String(b.name)));
+
+    let bal = n54(start[3]);
+    const rows = [[start[0], start[1], start[2], bal, statusForBalance54(bal)]];
+    events.forEach(e=>{
+      bal += n54(e.amount);
+      rows.push([e.date, e.name, e.amount, bal, statusForBalance54(bal)]);
+    });
+
+    try {
+      const carry = window.cashflowCarryoverNeedV53 && window.cashflowCarryoverNeedV53();
+      if(carry){
+        rows.push([monthEnd54(), `Next-month first-${carry.firstDays}-days reserve check`, 0, bal, statusForBalance54(bal)]);
+      }
+    } catch(e) {}
+    return rows;
+  };
+
+  window.renderCashflow = function(){
+    const table = document.getElementById('cashflowTable');
+    if(!table) return;
+    let variableReserveTotal = 0;
+    let sinkingContributionTotal = 0;
+    try {
+      const rows = (typeof previousCashflowRowsV54 === 'function') ? previousCashflowRowsV54() : [];
+      variableReserveTotal = rows.filter(r=>String(r[1]).includes('Variable spending reserve')).reduce((a,r)=>a+abs54(r[2]),0);
+      sinkingContributionTotal = rows.filter(r=>String(r[1]).includes('sinking fund contribution')).reduce((a,r)=>a+abs54(r[2]),0);
+    } catch(e) {}
+    let carryHtml = '';
+    try {
+      const carry = window.cashflowCarryoverNeedV53 && window.cashflowCarryoverNeedV53();
+      if(carry){
+        carryHtml = `<tr><th colspan="5">Carryover safety rule: OK now requires ${money(carry.totalFloor)} ending checking (${money(carry.minimumBuffer)} buffer + ${money(carry.fixed)} fixed/debt due in first ${carry.firstDays} days of ${carry.nextMonth} + ${money(carry.variable)} estimated variable spending). Anything below that is Carryover Risk, even if it is above ${money(carry.minimumBuffer)}.</th></tr>`;
+      }
+    } catch(e) {}
+    table.innerHTML =
+      `<tr><th colspan="5">Forecast model: fixed bills/debt + future paychecks + probability-based variable reserve + planned sinking-fund contributions. Remaining variable reserve: ${money(variableReserveTotal)} | Remaining sinking-fund contributions: ${money(sinkingContributionTotal)}</th></tr>` +
+      carryHtml +
+      '<tr><th>Date</th><th>Event</th><th class="num">Amount</th><th class="num">Projected Checking</th><th>Status</th></tr>' +
+      cashflowRows().map(r=>{
+        const cls = statusClass54(r[4]);
+        return `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td class="num">${money(r[2])}</td><td class="num ${cls}">${money(r[3])}</td><td><span class="pill ${cls}">${esc(r[4])}</span></td></tr>`;
+      }).join('');
+  };
+
+  try { renderCashflow(); } catch(e){ console.warn('v54 Katy paycheck cashflow repair render skipped', e); }
+})();
+</script>
+
+<script>
+/* ===== v55: Smart Carryover Adjuster ONLY =====
+   Uses the current attached file as the base. Does not change stored budgets, transactions,
+   splits, imports, Apps Script, cards, loans, bills, or daily views.
+   Adds a cash-flow helper that shows how much needs to be held back from variable spending
+   and/or sinking-fund contributions to meet the carryover safety floor.
+*/
+(function(){
+  function n55(v){ const n=Number(v); return Number.isFinite(n) ? n : 0; }
+  function abs55(v){ return Math.abs(n55(v)); }
+  function month55(){ return String((window.app && app.month) || '2026-06'); }
+  function monthEnd55(){
+    const [y,m] = month55().split('-').map(Number);
+    const d = new Date(y || new Date().getFullYear(), m || 1, 0);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  function smartPriority55(name, kind){
+    const s = String(name || '').toLowerCase();
+    // Higher number = easier to pause first.
+    if(kind === 'variable'){
+      if(s.includes('date') || s.includes('alcohol') || s.includes('entertainment')) return 95;
+      if(s.includes('house cleaning') || s.includes('services')) return 90;
+      if(s.includes('household miscellaneous') || s.includes('kids experiences')) return 80;
+      if(s.includes('joe - individual') || s.includes('katy - individual')) return 75;
+      if(s.includes('kids miscellaneous') || s.includes('household consumables')) return 65;
+      if(s.includes('auto') || s.includes('fuel')) return 45;
+      if(s.includes('basic health') || s.includes('dog food')) return 35;
+      if(s.includes('groceries')) return 25;
+      return 50;
+    }
+    if(s === 'debt payoff') return 100;
+    if(s.includes('family travel') || s.includes('friends trip')) return 95;
+    if(s.includes('shared fun') || s.includes('health & fitness')) return 90;
+    if(s.includes('home improvement')) return 85;
+    if(s.includes('dog grooming') || s.includes('boarding')) return 75;
+    if(s.includes('christmas') || s.includes('birthdays')) return 65;
+    if(s.includes('summer') || s.includes('kids sports') || s.includes('kids birthday')) return 55;
+    if(s.includes('car repairs') || s.includes('car tax')) return 35;
+    if(s.includes('medical') || s.includes('dental')) return 25;
+    if(s.includes('emergency')) return 10;
+    return 50;
+  }
+  function currentMonth55(t){
+    if(!t) return false;
+    if(typeof currentMonthTxV21 === 'function') return currentMonthTxV21(t);
+    if(typeof inBudgetMonth === 'function') return inBudgetMonth(t);
+    return String(t.date||'').slice(0,7) === month55();
+  }
+  function spendForCategory55(name){
+    try { return typeof txSpendByCategory === 'function' ? n55(txSpendByCategory(name)) : 0; }
+    catch(e){ return 0; }
+  }
+  function variableCandidateRows55(){
+    const seen = new Set();
+    const rows = [];
+    (app.spendingBudgets || []).forEach(b=>{
+      if(seen.has(b.name)) return;
+      seen.add(b.name);
+      const budget = n55(b.budget);
+      const spent = spendForCategory55(b.name);
+      const remaining = Math.max(0, budget - spent);
+      if(remaining > 0.009){
+        rows.push({
+          kind:'variable',
+          name:b.name,
+          label:`Trim ${b.friendly || b.name} remaining budget`,
+          available:remaining,
+          priority:smartPriority55(b.name, 'variable')
+        });
+      }
+    });
+    // Some versions store variable necessities in Bills. Only include them if not already in spendingBudgets.
+    const variableBillNames = new Set(['Groceries','Dog Food','Auto Fuel & Maintenance','Basic Health & Personal Care','House Cleaning','Services']);
+    (app.bills || []).forEach(b=>{
+      if(!variableBillNames.has(b.name) || seen.has(b.name)) return;
+      seen.add(b.name);
+      const budget = n55(b.amount);
+      const spent = spendForCategory55(b.name);
+      const remaining = Math.max(0, budget - spent);
+      if(remaining > 0.009){
+        rows.push({
+          kind:'variable',
+          name:b.name,
+          label:`Trim ${b.name} remaining budget`,
+          available:remaining,
+          priority:smartPriority55(b.name, 'variable')
+        });
+      }
+    });
+    return rows;
+  }
+  function actualDebtPayoffPaid55(f){
+    // Debt Payoff is special: it may already be paid via an explicit split/extra payment,
+    // and several older patches named that calculation differently. Use the strongest
+    // available source first, then fall back to the fund's saved/contributed value.
+    const candidates = [];
+    try { if(typeof explicitDebtPayoffExtra === 'function') candidates.push(n55(explicitDebtPayoffExtra())); } catch(e) {}
+    try { if(typeof debtPayoffExtraV31 === 'function') candidates.push(n55(debtPayoffExtraV31())); } catch(e) {}
+    try { if(typeof debtPayoffExtraFromSplitsV29 === 'function') candidates.push(n55(debtPayoffExtraFromSplitsV29())); } catch(e) {}
+    try { if(typeof extraDebtPaidThisMonth === 'function') candidates.push(n55(extraDebtPaidThisMonth())); } catch(e) {}
+    try { if(typeof sinkingFundActualV21 === 'function') candidates.push(n55(sinkingFundActualV21(f))); } catch(e) {}
+    try { if(typeof sinkingFundContributionAmount === 'function') candidates.push(n55(sinkingFundContributionAmount(f.name))); } catch(e) {}
+    candidates.push(n55(f.saved));
+    return Math.max(0, ...candidates);
+  }
+  function actualSinkingContributed55(f){
+    try {
+      if(String(f.name || '').trim() === 'Debt Payoff') return actualDebtPayoffPaid55(f);
+      if(typeof sinkingFundActualV21 === 'function') return n55(sinkingFundActualV21(f));
+      if(typeof sinkingFundContributionAmount === 'function') return n55(f.saved) + n55(sinkingFundContributionAmount(f.name));
+    } catch(e) {}
+    return n55(f.saved);
+  }
+  function sinkingCandidateRows55(){
+    return (app.sinkingFunds || []).map(f=>{
+      const planned = n55(f.budget);
+      const actual = actualSinkingContributed55(f);
+      const remaining = Math.max(0, planned - actual);
+      const isDebtPayoff = String(f.name || '').trim() === 'Debt Payoff';
+      return {
+        kind:'sinking',
+        name:f.name,
+        label: isDebtPayoff ? `Debt Payoff already paid / no hold needed` : `Pause ${f.name} contribution`,
+        available:remaining,
+        priority:smartPriority55(f.name, 'sinking'),
+        actual
+      };
+    }).filter(x=>x.available > 0.009);
+  }
+  function cashflowEnding55(){
+    const rows = (typeof cashflowRows === 'function') ? cashflowRows() : [];
+    if(!rows.length) return 0;
+    // Prefer the last true month-end row before the reserve-check line if present.
+    const nonCheck = rows.filter(r=>!String(r[1] || '').includes('Next-month first-'));
+    const source = nonCheck.length ? nonCheck[nonCheck.length - 1] : rows[rows.length - 1];
+    return n55(source[3]);
+  }
+  function carryoverTarget55(){
+    const carry = (window.cashflowCarryoverNeedV53 && window.cashflowCarryoverNeedV53()) || null;
+    if(carry && n55(carry.totalFloor) > 0) return carry;
+    return {
+      totalFloor: 2500,
+      minimumBuffer: 2500,
+      fixed:0,
+      variable:0,
+      firstDays:6,
+      nextMonth:'next month'
+    };
+  }
+  window.smartCarryoverAdjusterV55 = function(){
+    const carry = carryoverTarget55();
+    const ending = cashflowEnding55();
+    const gap = Math.max(0, n55(carry.totalFloor) - ending);
+    const candidates = [...sinkingCandidateRows55(), ...variableCandidateRows55()]
+      .sort((a,b)=>b.priority-a.priority || b.available-a.available || a.name.localeCompare(b.name));
+    let remaining = gap;
+    const actions = [];
+    candidates.forEach(c=>{
+      if(remaining <= 0.009) return;
+      const use = Math.min(c.available, remaining);
+      if(use > 0.009){
+        actions.push({...c, suggested:Math.round(use*100)/100});
+        remaining = Math.round((remaining - use)*100)/100;
+      }
+    });
+    const covered = actions.reduce((a,x)=>a+n55(x.suggested),0);
+    return {
+      carry,
+      ending,
+      gap:Math.round(gap*100)/100,
+      covered:Math.round(covered*100)/100,
+      remaining:Math.max(0, Math.round((gap-covered)*100)/100),
+      adjustedEnding:Math.round((ending+covered)*100)/100,
+      actions
+    };
+  };
+
+  function renderSmartCarryoverAdjusterV55(){
+    const cashflowSection = document.querySelector('#cashflow .section');
+    if(!cashflowSection) return;
+    let box = document.getElementById('smartCarryoverAdjusterV55');
+    if(!box){
+      box = document.createElement('div');
+      box.id = 'smartCarryoverAdjusterV55';
+      box.className = 'notice';
+      cashflowSection.appendChild(box);
+    }
+    const plan = window.smartCarryoverAdjusterV55();
+    const carry = plan.carry;
+    const gapClass = plan.gap > 0.009 ? 'warn' : 'ok';
+    const stillClass = plan.remaining > 0.009 ? 'bad' : 'ok';
+    const actionRows = plan.actions.length
+      ? plan.actions.map(a=>`<tr>
+          <td>${esc(a.label)}<div class="tiny">${a.kind === 'sinking' ? 'Sinking fund hold' : 'Variable spending trim'}</div></td>
+          <td class="num">${money(a.available)}</td>
+          <td class="num"><b>${money(a.suggested)}</b></td>
+        </tr>`).join('')
+      : '<tr><td colspan="3">No adjustment needed. Ending checking already meets the carryover safety floor.</td></tr>';
+
+    box.innerHTML = `
+      <h3>Smart Carryover Adjuster</h3>
+      <div class="small">
+        This does <b>not</b> mutate your budget automatically. It shows exactly what to pause/trim so month-end cash is high enough
+        to survive the first ${esc(carry.firstDays)} days of ${esc(carry.nextMonth)}.
+      </div>
+      <div class="metrics" style="grid-template-columns:repeat(4,1fr);margin-top:10px">
+        <div class="metric"><div class="label">Required carryover</div><div class="value">${money(carry.totalFloor)}</div></div>
+        <div class="metric"><div class="label">Forecast carryover</div><div class="value ${gapClass}">${money(plan.ending)}</div></div>
+        <div class="metric"><div class="label">Gap to solve</div><div class="value ${gapClass}">${money(plan.gap)}</div></div>
+        <div class="metric"><div class="label">After suggested holds</div><div class="value ${stillClass}">${money(plan.adjustedEnding)}</div></div>
+      </div>
+      <div class="tiny" style="margin-top:8px">
+        Formula: ${money(carry.minimumBuffer)} minimum buffer + ${money(carry.fixed)} fixed/debt due in first ${carry.firstDays} days + ${money(carry.variable)} early-month variable spending estimate.
+      </div>
+      <table style="margin-top:10px">
+        <tr><th>Suggested adjustment</th><th class="num">Available to hold/trim</th><th class="num">Use this amount</th></tr>
+        ${actionRows}
+        <tr><th>Covered by suggestions</th><th></th><th class="num">${money(plan.covered)}</th></tr>
+        <tr><th>Still unresolved</th><th></th><th class="num ${plan.remaining>0.009?'bad':'ok'}">${money(plan.remaining)}</th></tr>
+      </table>
+      <div class="small" style="margin-top:8px">
+        Practical read: if the gap exists, do not fund the listed sinking funds yet and/or treat the listed variable budget dollars as frozen.
+        That is how you make the carryover number real instead of just hoping the next month starts gently.
+      </div>`;
+  }
+
+  const previousRenderCashflowV55 = window.renderCashflow;
+  window.renderCashflow = function(){
+    if(typeof previousRenderCashflowV55 === 'function') previousRenderCashflowV55.apply(this, arguments);
+    renderSmartCarryoverAdjusterV55();
+  };
+
+  try { renderCashflow(); } catch(e){ console.warn('v55 smart carryover adjuster render skipped', e); }
+})();
+</script>
+
+
+<script>
+/* ===== v58: final Bills / Necessities confirmed-paid guard =====
+   Built on the attached v57 file only.
+   Fixes the "correct briefly, then resets to $0 after Sheet load" issue by making
+   bill confirmed-paid calculation independent of app.paidBills and reapplying it
+   after every render/load.
+*/
+(function(){
+  const VARIABLE_NECESSITIES_V58 = new Set([
+    'Groceries',
+    'Dog Food',
+    'Auto Fuel & Maintenance',
+    'Basic Health & Personal Care',
+    'House Cleaning',
+    'Services'
+  ]);
+
+  function n58(v){
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function cents58(v){
+    return Math.round(n58(v) * 100) / 100;
+  }
+
+  function currentMonth58(t){
+    const m = String((window.app && app.month) || '').slice(0,7);
+    return !!(m && t && String(t.date || '').slice(0,7) === m);
+  }
+
+  function norm58(s){
+    return String(s || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g,' ')
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+
+  function txText58(t){
+    return norm58([
+      t.description,
+      t.rawDescription,
+      t.memo,
+      t.name,
+      t.merchant,
+      t.account,
+      t.source
+    ].filter(Boolean).join(' '));
+  }
+
+  function billKeywordList58(bill){
+    const name = String(bill && bill.name || '');
+    const low = name.toLowerCase();
+    const keys = [];
+
+    (bill && bill.paymentKeywords || []).forEach(k => { if(k) keys.push(k); });
+    if(name) keys.push(name);
+
+    if(low.includes('dominion')) keys.push('DOMINION', 'DOMINION ENERGY', 'DOMINION ENERGY BILLPAY');
+    if(low.includes('hrsd')) keys.push('HRSD');
+    if(low.includes('virginia beach public utilities')) keys.push('VIRGINIA BEACH PUBLIC UTILITIES', 'VB PUBLIC UTILITIES', 'VIRGINIA BEACH UTILITIES');
+    if(low.includes('verizon')) keys.push('VERIZON');
+    if(low.includes('t-mobile') || low.includes('tmobile')) keys.push('T MOBILE', 'TMOBILE', 'T-MOBILE');
+    if(low.includes('car insurance')) keys.push('GRANGE', 'GRANGE INSURANCE', 'GRANGE INSURANCE PREM');
+    if(low.includes('icloud')) keys.push('ICLOUD', 'APPLE ICLOUD');
+    if(low.includes('spotify')) keys.push('SPOTIFY');
+    if(low.includes('apple tv')) keys.push('APPLE TV');
+    if(low.includes('apple care')) keys.push('APPLE CARE', 'APPLECARE');
+
+    return [...new Set(keys.map(norm58).filter(Boolean))];
+  }
+
+  function txMatchesBill58(t, bill){
+    const billName = String(bill && bill.name || '');
+    if(String(t.category || '') === billName) return true;
+
+    if(Array.isArray(t.splits) && t.splits.some(s => String(s.category || '') === billName)) return true;
+
+    const text = txText58(t);
+    const keys = billKeywordList58(bill);
+    return keys.some(k => k && text.includes(k));
+  }
+
+  function splitPaidForBill58(t, bill){
+    const billName = String(bill && bill.name || '');
+    if(!Array.isArray(t.splits)) return 0;
+    return t.splits.reduce((total, s) => {
+      if(String(s.category || '') !== billName) return total;
+      const treatment = String(s.treatment || 'Auto');
+      if(['Income','Ignore / Transfer','Reimbursement / Credit'].includes(treatment)) return total;
+      return total + Math.abs(n58(s.amount));
+    }, 0);
+  }
+
+  function fixedBillPaid58(bill){
+    if(!bill) return 0;
+    const name = String(bill.name || '');
+    const fromTx = (app.transactions || []).reduce((total, t) => {
+      if(!currentMonth58(t)) return total;
+
+      const splitAmt = splitPaidForBill58(t, bill);
+      if(splitAmt) return total + splitAmt;
+
+      if(!txMatchesBill58(t, bill)) return total;
+
+      const treatment = String(t.treatment || t.type || 'Auto');
+      if(['Income','Ignore / Transfer','Reimbursement / Credit'].includes(treatment)) return total;
+
+      const amt = n58(t.amount);
+      if(amt === 0) return total;
+
+      // Fixed bills are money leaving checking/card. Count outflows, not deposits.
+      return total + Math.abs(amt);
+    }, 0);
+
+    const savedMapValue = n58((app.paidBills || {})[name]);
+    return cents58(Math.max(fromTx, savedMapValue));
+  }
+
+  function variablePaid58(bill){
+    const name = String(bill && bill.name || '');
+    let spent = 0;
+
+    if(typeof window.txSpendByCategory === 'function'){
+      spent = Math.abs(n58(window.txSpendByCategory(name)));
+    }
+
+    if(spent <= 0){
+      spent = (app.transactions || []).reduce((total, t) => {
+        if(!currentMonth58(t)) return total;
+        if(String(t.category || '') !== name) return total;
+        const treatment = String(t.treatment || t.type || 'Auto');
+        if(['Income','Ignore / Transfer','Sinking Fund Contribution'].includes(treatment)) return total;
+        return total + Math.abs(n58(t.amount));
+      }, 0);
+    }
+
+    return cents58(spent);
+  }
+
+  window.billPaidAmountV58 = function(bill){
+    if(!bill) return 0;
+    if(VARIABLE_NECESSITIES_V58.has(String(bill.name || ''))) return variablePaid58(bill);
+    return fixedBillPaid58(bill);
+  };
+
+  const previousPaidForScheduledV58 = window.paidForScheduled;
+  window.paidForScheduled = function(x){
+    if(x && x.kind === 'bill'){
+      const bill = (app.bills || []).find(b => b.name === x.name);
+      if(bill) return window.billPaidAmountV58(bill);
+    }
+    return typeof previousPaidForScheduledV58 === 'function' ? previousPaidForScheduledV58(x) : 0;
+  };
+
+  const previousRenderDebtsV58 = window.renderDebts;
+  window.renderDebts = function(){
+    if(typeof previousRenderDebtsV58 === 'function') previousRenderDebtsV58.apply(this, arguments);
+
+    const billTable = document.getElementById('billTable');
+    if(!billTable) return;
+
+    billTable.innerHTML =
+      '<tr><th>Name</th><th class="num">Budget</th><th class="num">Confirmed Paid</th><th>Due</th></tr>' +
+      (app.bills || []).map(b => {
+        const isVariable = VARIABLE_NECESSITIES_V58.has(String(b.name || ''));
+        const sub = isVariable ? '<div class="tiny">Month-to-date spending</div>' : '';
+        return `<tr>
+          <td>${esc(b.name)}${sub}</td>
+          <td class="num">${money(b.amount)}</td>
+          <td class="num">${money(window.billPaidAmountV58(b))}</td>
+          <td>${esc(b.due)}</td>
+        </tr>`;
+      }).join('');
+  };
+
+  const previousLoadFromSheetV58 = window.loadFromSheet;
+  if(typeof previousLoadFromSheetV58 === 'function'){
+    window.loadFromSheet = async function(){
+      const result = await previousLoadFromSheetV58.apply(this, arguments);
+      try {
+        renderDebts();
+        renderCashflow();
+        renderDaily();
+      } catch(e) {
+        console.warn('v58 post-load render skipped', e);
+      }
+      return result;
+    };
+  }
+
+  try { renderDebts(); renderCashflow(); renderDaily(); } catch(e){ console.warn('v58 bill confirmed-paid guard render skipped', e); }
+})();
+</script>
+
+
+<script>
+/* ===== v59: Bills / Necessities confirmed-paid hard fix =====
+   Built from the attached v58 file only.
+   Root cause: v58's month checker used window.app, but app is declared with let, so window.app is undefined.
+   Result: fixed-bill transaction matching always returned 0 after the live Sheet render.
+   This patch uses the real app binding, recalculates from current-month transactions, and protects billTable
+   from later renders overwriting it back to app.paidBills zeros.
+*/
+(function(){
+  const VARIABLE_NECESSITIES_V59 = new Set([
+    'Groceries',
+    'Dog Food',
+    'Auto Fuel & Maintenance',
+    'Basic Health & Personal Care',
+    'House Cleaning',
+    'Services'
+  ]);
+
+  let renderingBillsV59 = false;
+
+  function n59(v){
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function cents59(v){
+    return Math.round(n59(v) * 100) / 100;
+  }
+
+  function month59(){
+    return String((app && app.month) || '').slice(0,7);
+  }
+
+  function currentMonth59(t){
+    const m = month59();
+    return !!(m && t && String(t.date || t.posted || '').slice(0,7) === m);
+  }
+
+  function norm59(s){
+    return String(s || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g,' ')
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+
+  function txText59(t){
+    return norm59([
+      t.description,
+      t.rawDescription,
+      t.memo,
+      t.name,
+      t.merchant,
+      t.payee,
+      t.account,
+      t.source
+    ].filter(Boolean).join(' '));
+  }
+
+  function treatment59(t){
+    return String(t.treatment || t.type || 'Auto');
+  }
+
+  function billKeywordList59(bill){
+    const name = String(bill && bill.name || '');
+    const low = name.toLowerCase();
+    const keys = [];
+
+    (bill && bill.paymentKeywords || []).forEach(k => { if(k) keys.push(k); });
+    if(name) keys.push(name);
+
+    if(low.includes('dominion')) keys.push('DOMINION', 'DOMINION ENERGY', 'DOMINION ENERGY BILLPAY');
+    if(low.includes('hrsd')) keys.push('HRSD');
+    if(low.includes('virginia beach public utilities')) keys.push('VIRGINIA BEACH PUBLIC UTILITIES', 'VB PUBLIC UTILITIES', 'VIRGINIA BEACH UTILITIES');
+    if(low.includes('verizon')) keys.push('VERIZON');
+    if(low.includes('t-mobile') || low.includes('tmobile')) keys.push('T MOBILE', 'TMOBILE', 'T-MOBILE');
+    if(low.includes('car insurance')) keys.push('GRANGE', 'GRANGE INSURANCE', 'GRANGE INSURANCE PREM');
+    if(low.includes('icloud')) keys.push('ICLOUD', 'APPLE ICLOUD');
+    if(low.includes('spotify')) keys.push('SPOTIFY');
+    if(low.includes('apple tv')) keys.push('APPLE TV');
+    if(low.includes('apple care')) keys.push('APPLE CARE', 'APPLECARE');
+
+    return [...new Set(keys.map(norm59).filter(Boolean))];
+  }
+
+  function txMatchesBill59(t, bill){
+    const billName = String(bill && bill.name || '');
+    if(String(t.category || '') === billName) return true;
+
+    if(Array.isArray(t.splits) && t.splits.some(s => String(s.category || '') === billName)) return true;
+
+    const text = txText59(t);
+    const keys = billKeywordList59(bill);
+    return keys.some(k => k && text.includes(k));
+  }
+
+  function splitPaidForBill59(t, bill){
+    const billName = String(bill && bill.name || '');
+    if(!Array.isArray(t.splits)) return 0;
+
+    return t.splits.reduce((total, s) => {
+      if(String(s.category || '') !== billName) return total;
+      const st = String(s.treatment || 'Auto');
+      if(['Income','Ignore / Transfer','Reimbursement / Credit'].includes(st)) return total;
+      return total + Math.abs(n59(s.amount));
+    }, 0);
+  }
+
+  function fixedBillPaid59(bill){
+    const name = String(bill && bill.name || '');
+    const fromTransactions = (app.transactions || []).reduce((total, t) => {
+      if(!currentMonth59(t)) return total;
+
+      const splitPaid = splitPaidForBill59(t, bill);
+      if(splitPaid) return total + splitPaid;
+
+      if(!txMatchesBill59(t, bill)) return total;
+
+      const tr = treatment59(t);
+      if(['Income','Ignore / Transfer','Reimbursement / Credit'].includes(tr)) return total;
+
+      const amount = n59(t.amount);
+      if(!amount) return total;
+
+      return total + Math.abs(amount);
+    }, 0);
+
+    const savedValue = n59((app.paidBills || {})[name]);
+    return cents59(Math.max(fromTransactions, savedValue));
+  }
+
+  function variablePaid59(bill){
+    const name = String(bill && bill.name || '');
+    let spent = 0;
+
+    if(typeof txSpendByCategory === 'function'){
+      spent = Math.abs(n59(txSpendByCategory(name)));
+    }
+
+    if(spent <= 0){
+      spent = (app.transactions || []).reduce((total, t) => {
+        if(!currentMonth59(t)) return total;
+
+        const splitPaid = splitPaidForBill59(t, bill);
+        if(splitPaid) return total + splitPaid;
+
+        if(String(t.category || '') !== name) return total;
+
+        const tr = treatment59(t);
+        if(['Income','Ignore / Transfer','Sinking Fund Contribution','Reimbursement / Credit'].includes(tr)) return total;
+
+        return total + Math.abs(n59(t.amount));
+      }, 0);
+    }
+
+    return cents59(spent);
+  }
+
+  function billPaidAmount59(bill){
+    if(!bill) return 0;
+    if(VARIABLE_NECESSITIES_V59.has(String(bill.name || ''))) return variablePaid59(bill);
+    return fixedBillPaid59(bill);
+  }
+
+  window.billPaidAmountV59 = billPaidAmount59;
+  window.billPaidAmountV58 = billPaidAmount59;
+
+  const previousPaidForScheduledV59 = paidForScheduled;
+  paidForScheduled = function(x){
+    if(x && x.kind === 'bill'){
+      const bill = (app.bills || []).find(b => b.name === x.name);
+      if(bill) return billPaidAmount59(bill);
+    }
+    return typeof previousPaidForScheduledV59 === 'function' ? previousPaidForScheduledV59(x) : 0;
+  };
+
+  function renderBillTable59(){
+    const billTable = document.getElementById('billTable');
+    if(!billTable || !app || !Array.isArray(app.bills)) return;
+
+    renderingBillsV59 = true;
+    billTable.innerHTML =
+      '<tr><th>Name</th><th class="num">Budget</th><th class="num">Confirmed Paid</th><th>Due</th></tr>' +
+      app.bills.map(b => {
+        const isVariable = VARIABLE_NECESSITIES_V59.has(String(b.name || ''));
+        const sub = isVariable ? '<div class="tiny">Month-to-date spending</div>' : '';
+        return `<tr>
+          <td>${esc(b.name)}${sub}</td>
+          <td class="num">${money(b.amount)}</td>
+          <td class="num">${money(billPaidAmount59(b))}</td>
+          <td>${esc(b.due)}</td>
+        </tr>`;
+      }).join('');
+    billTable.dataset.v59Fixed = String(Date.now());
+    renderingBillsV59 = false;
+  }
+
+  const previousRenderDebtsV59 = renderDebts;
+  renderDebts = function(){
+    if(typeof previousRenderDebtsV59 === 'function') previousRenderDebtsV59.apply(this, arguments);
+    renderBillTable59();
+  };
+  window.renderDebts = renderDebts;
+
+  const previousRenderV59 = render;
+  render = function(){
+    const result = previousRenderV59.apply(this, arguments);
+    renderBillTable59();
+    return result;
+  };
+  window.render = render;
+
+  const previousLoadFromSheetV59 = loadFromSheet;
+  loadFromSheet = async function(){
+    const result = await previousLoadFromSheetV59.apply(this, arguments);
+    renderBillTable59();
+    try { renderCashflow(); renderDaily(); } catch(e){ console.warn('v59 post-load dependent render skipped', e); }
+    renderBillTable59();
+    return result;
+  };
+  window.loadFromSheet = loadFromSheet;
+
+  const billTable = document.getElementById('billTable');
+  if(billTable && typeof MutationObserver !== 'undefined'){
+    const observer = new MutationObserver(() => {
+      if(renderingBillsV59) return;
+      clearTimeout(window.__billV59Timer);
+      window.__billV59Timer = setTimeout(renderBillTable59, 25);
+    });
+    observer.observe(billTable, {childList:true, subtree:true});
+  }
+
+  try { renderDebts(); } catch(e){ console.warn('v59 immediate bill render skipped', e); }
+})();
+</script>
