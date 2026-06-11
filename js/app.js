@@ -1402,16 +1402,74 @@ function debtPaymentTransactionsV21(){
   });
 }
 function cardPaidMapV21(){
-  const out={}; (app.creditCards||[]).forEach(c=>out[c.name]=0);
-  debtPaymentTransactionsV21().forEach(t=>{
-    const desc=String(t.rawDescription||t.description||'').toUpperCase(); const amt=Math.abs(safeNumV21(t.amount)); if(!amt) return;
-    const matches=(app.creditCards||[]).filter(c=>cardKeywordsV21(c).some(k=>desc.includes(k)));
+  const out = {};
+  (app.creditCards || []).forEach(c => out[c.name] = 0);
+
+  const txs = debtPaymentTransactionsV21();
+
+  const appleCardStatementPayments = txs.filter(t => {
+    const src = String(t.source || t.account || '').toUpperCase();
+    const desc = String(t.rawDescription || t.description || '').toUpperCase();
+    return src.includes('APPLE CARD') &&
+      desc.includes('ACH DEPOSIT INTERNET TRANSFER');
+  });
+
+  function isSchwabMirrorOfApplePayment(t){
+    const src = String(t.source || t.account || '').toUpperCase();
+    const desc = String(t.rawDescription || t.description || '').toUpperCase();
+    const amt = Math.abs(safeNumV21(t.amount));
+
+    if(!src.includes('SCHWAB')) return false;
+    if(!desc.includes('APPLECARD GSBANK')) return false;
+
+    return appleCardStatementPayments.some(a => {
+      const appleAmt = Math.abs(safeNumV21(a.amount));
+      const sameAmount = Math.abs(appleAmt - amt) < 0.01;
+
+      const appleDate = String(a.date || '');
+      const schwabDate = String(t.date || '');
+      const closeDate = Math.abs(new Date(appleDate) - new Date(schwabDate)) <= 3 * 24 * 60 * 60 * 1000;
+
+      return sameAmount && closeDate;
+    });
+  }
+
+  txs.forEach(t => {
+    if(isSchwabMirrorOfApplePayment(t)) return;
+
+    const desc = String(t.rawDescription || t.description || '').toUpperCase();
+    const amt = Math.abs(safeNumV21(t.amount));
+    if(!amt) return;
+
+    const matches = (app.creditCards || []).filter(c =>
+      cardKeywordsV21(c).some(k => desc.includes(k))
+    );
+
     if(matches.length){
-      let winner=matches[0], diff=Math.abs(amt-safeNumV21(matches[0].min));
-      matches.forEach(c=>{const d=Math.abs(amt-safeNumV21(c.min)); if(d<diff){winner=c; diff=d;}});
-      out[winner.name]=(out[winner.name]||0)+amt;
+      let winner = matches[0];
+      let diff = Math.abs(amt - safeNumV21(matches[0].min));
+
+      matches.forEach(c => {
+        const d = Math.abs(amt - safeNumV21(c.min));
+        if(d < diff){
+          winner = c;
+          diff = d;
+        }
+      });
+
+      out[winner.name] = (out[winner.name] || 0) + amt;
+      return;
+    }
+
+    const src = String(t.source || t.account || '').toUpperCase();
+    if(src.includes('APPLE CARD')){
+      const apple = (app.creditCards || []).find(c =>
+        String(c.name || '').toUpperCase().includes('APPLE CARD')
+      );
+      if(apple) out[apple.name] = (out[apple.name] || 0) + amt;
     }
   });
+
   return out;
 }
 function extraDebtPayoffV21(){
@@ -5214,4 +5272,40 @@ render();
   }
 
   try { renderDebts(); } catch(e){ console.warn('v59 immediate bill render skipped', e); }
+})();
+
+/* ===== SPLIT SAVE REPAIR ===== */
+(function(){
+  function currentSave(){
+    if(typeof window.saveTransactionEdits === 'function') return window.saveTransactionEdits();
+    if(typeof saveTransactionEdits === 'function') return saveTransactionEdits();
+  }
+
+  function installSplitSafeSaveButton(){
+    const btn = document.getElementById('saveChanges');
+    if(!btn || btn.dataset.splitSafeSaveInstalled === 'true') return;
+    btn.dataset.splitSafeSaveInstalled = 'true';
+
+    btn.addEventListener('click', function(e){
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      currentSave();
+    }, true);
+  }
+
+  if(document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installSplitSafeSaveButton, {once:true});
+  } else {
+    installSplitSafeSaveButton();
+  }
+
+  const previousRenderForSplitSaveRepair = typeof render === 'function' ? render : null;
+  if(previousRenderForSplitSaveRepair){
+    render = function(){
+      const result = previousRenderForSplitSaveRepair.apply(this, arguments);
+      installSplitSafeSaveButton();
+      return result;
+    };
+    window.render = render;
+  }
 })();
