@@ -1,0 +1,38 @@
+{
+  "source_file": "/mnt/data/index.html",
+  "source_bytes": 293508,
+  "extracted_style_blocks": 6,
+  "extracted_script_blocks": 29,
+  "output_files": [
+    "index.html",
+    "css/styles.css",
+    "js/app.js",
+    "README.md"
+  ],
+  "duplicate_function_definitions": {
+    "renderDaily": 14,
+    "cashflowRows": 10,
+    "paidForScheduled": 8,
+    "renderBudgets": 8,
+    "renderCashflow": 8,
+    "renderDebts": 8,
+    "renderPersonalView": 7,
+    "transactionSpendAmount": 7,
+    "txSpendByCategory": 7,
+    "renderTransactions": 5,
+    "saveTransactionEdits": 5,
+    "render": 4,
+    "sinkingFundPosition": 4,
+    "buildTransactionFromRow": 3,
+    "saveApiUrl": 3,
+    "sinkingFundContributionAmount": 3,
+    "applyRules": 2,
+    "extraDebtPaidThisMonth": 2,
+    "getApiUrl": 2,
+    "hideLoadingV23": 2,
+    "load": 2,
+    "save": 2,
+    "showLoadingV23": 2,
+    "sinkingFundProjectedPosition": 2
+  }
+}
