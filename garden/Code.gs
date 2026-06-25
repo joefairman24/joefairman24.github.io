@@ -1,32 +1,59 @@
 const SHEET_ID = '1JGwfNQDGFonrpYj5drQ3YZLHrox7By278MWfhZq4mQ0';
-const MAIN_SHEET_NAMES = ['Plant Guide','Plants','Plant Bible','Backyard Plant Bible'];
+const PLANT_SHEET_NAME = 'Plant Guide';
+const FRUIT_SHEET_NAME = 'Fruit & Harvest';
+const SEASONAL_SHEET_NAME = 'Seasonal Calendar';
 
 function doGet(e) {
   e = e || { parameter: {} };
-  const action = String(e.parameter.action || 'plants').toLowerCase();
-  let output;
-  if (action === 'plants') output = { plants: getPlants_() };
-  else output = { ok: false, error: 'Unknown action', action: action };
-  return respond_(output, e.parameter.callback);
+  const action = e.parameter.action || 'all';
+  let payload;
+  if (action === 'plants') payload = { plants: readSheet_(PLANT_SHEET_NAME) };
+  else if (action === 'fruit') payload = { fruit: readSheet_(FRUIT_SHEET_NAME) };
+  else if (action === 'seasonal') payload = { seasonal: readSheet_(SEASONAL_SHEET_NAME) };
+  else payload = { plants: readSheet_(PLANT_SHEET_NAME), fruit: readSheet_(FRUIT_SHEET_NAME), seasonal: readSheet_(SEASONAL_SHEET_NAME) };
+  return output_(payload, e);
 }
 
 function doPost(e) {
-  e = e || { parameter: {}, postData: { contents: '{}' } };
-  const action = String(e.parameter.action || '').toLowerCase();
-  const body = JSON.parse(e.postData && e.postData.contents ? e.postData.contents : '{}');
-  if (action === 'upsert') return respond_({ ok: true, rowNumber: upsertPlant_(body) }, e.parameter.callback);
-  return respond_({ ok: false, error: 'Unknown POST action' }, e.parameter.callback);
+  const body = e && e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
+  upsertPlant_(body);
+  return output_({ ok: true, saved: body }, e || { parameter: {} });
 }
 
-function respond_(obj, callback) {
-  const json = JSON.stringify(obj);
-  if (callback) return ContentService.createTextOutput(`${callback}(${json});`).setMimeType(ContentService.MimeType.JAVASCRIPT);
+function readSheet_(sheetName) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ss.getSheetByName(sheetName);
+  if (!sh) return [];
+  const values = sh.getDataRange().getValues();
+  if (values.length < 2) return [];
+  const headers = values[0].map(String);
+  const rows = [];
+  for (let r = 1; r < values.length; r++) {
+    const row = {};
+    let empty = true;
+    for (let c = 0; c < headers.length; c++) {
+      if (!headers[c]) continue;
+      row[headers[c]] = values[r][c];
+      if (values[r][c] !== '' && values[r][c] !== null) empty = false;
+    }
+    if (!empty) { row.rowNumber = r + 1; rows.push(row); }
+  }
+  return rows;
+}
+
+function upsertPlant_(plant) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ss.getSheetByName(PLANT_SHEET_NAME);
+  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+  const rowNumber = Number(plant.rowNumber || 0);
+  const row = headers.map(h => plant[h] !== undefined ? plant[h] : '');
+  if (rowNumber && rowNumber > 1) sh.getRange(rowNumber, 1, 1, headers.length).setValues([row]);
+  else sh.appendRow(row);
+}
+
+function output_(payload, e) {
+  const json = JSON.stringify(payload);
+  const callback = e && e.parameter && e.parameter.callback;
+  if (callback) return ContentService.createTextOutput(callback + '(' + json + ')').setMimeType(ContentService.MimeType.JAVASCRIPT);
   return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
 }
-
-function ss_(){ return SpreadsheetApp.openById(SHEET_ID); }
-function mainSheet_(){ const ss=ss_(); for (const name of MAIN_SHEET_NAMES){ const sh=ss.getSheetByName(name); if(sh) return sh; } return ss.getSheets()[0]; }
-function getPlants_(){ const sh=mainSheet_(); const values=sh.getDataRange().getDisplayValues(); if(values.length<2) return []; const headers=values[0].map(h=>String(h||'').trim()); return values.slice(1).filter(r=>r.join('').trim()).map((row,i)=>{ const obj={rowNumber:i+2}; headers.forEach((h,c)=>obj[h||`Column ${c+1}`]=row[c]); return obj; }); }
-function upsertPlant_(data){ const sh=mainSheet_(); let headers=sh.getRange(1,1,1,Math.max(sh.getLastColumn(),1)).getDisplayValues()[0].map(h=>String(h||'').trim()); const wanted=['Plant','Quantity','Type','Zone','Sun','Water','Bloom','Rabbit Risk','Prune','Fertilize','Fruit','Winter','Notes']; if(!headers.join('').trim()){ headers=wanted; sh.getRange(1,1,1,headers.length).setValues([headers]); } wanted.forEach(h=>{ if(!headers.includes(h)){ headers.push(h); sh.getRange(1,headers.length).setValue(h); } }); const rowNumber=Number(data.rowNumber)||sh.getLastRow()+1; const row=headers.map(h=>data[h] ?? data[alias_(h)] ?? ''); sh.getRange(rowNumber,1,1,headers.length).setValues([row]); log_('upsert',data.Plant||data.Name||'',rowNumber); return rowNumber; }
-function alias_(h){ const m={'Plant':'Name','Rabbit Risk':'Rabbits','Bloom':'Bloom Time','Prune':'When to Prune','Fertilize':'Fertilizer','Winter':'Winter / Freeze Notes','Fruit':'Fruit / Harvest / Protection'}; return m[h]||h; }
-function log_(action, plant, row){ const ss=ss_(); const sh=ss.getSheetByName('Activity Log')||ss.insertSheet('Activity Log'); if(sh.getLastRow()===0) sh.appendRow(['Timestamp','Action','Plant','Row']); sh.appendRow([new Date(),action,plant,row]); }

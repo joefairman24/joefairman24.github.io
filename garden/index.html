@@ -1,50 +1,71 @@
 <!doctype html>
-<!-- VERSION 2 TEST -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Joe's Backyard Plant Bible</title>
+  <title>Joe's Backyard Plant Bible · v3</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <aside class="sidebar">
-    <div class="brand"><span>🌿</span><div><b>Joe's Backyard</b><small>Plant Bible</small></div></div>
-    <nav>
-      <button class="nav active" data-view="dashboard">Dashboard</button>
-      <button class="nav" data-view="plants">Plant Library</button>
-      <button class="nav" data-view="calendar">Bloom Calendar</button>
-      <button class="nav" data-view="tasks">Tasks</button>
+  <header class="app-header">
+    <div class="brand"><div class="leafmark">🌿</div><div><b>Joe's Backyard</b><span>Plant Bible</span></div></div>
+    <nav class="tabs" aria-label="Main views">
+      <button class="tab active" data-view="dashboard">Dashboard</button>
+      <button class="tab" data-view="plants">Plant Library</button>
+      <button class="tab" data-view="calendar">Bloom + Harvest</button>
+      <button class="tab" data-view="tasks">Tasks</button>
+      <button class="tab" data-view="rabbit">Rabbit Triage</button>
     </nav>
-    <div class="sync"><small id="syncStatus">Loading garden…</small><button id="reload">Refresh</button></div>
-  </aside>
+    <div class="header-actions"><button id="reload" class="soft">Sync</button><button id="addPlant" class="primary">+ Add plant</button></div>
+  </header>
 
   <main>
-    <section class="topbar">
-      <div><p class="eyebrow">living garden command center</p><h1>Backyard Plant Bible</h1></div>
-      <button id="addPlant" class="primary">+ Add plant</button>
+    <section class="hero garden-panel">
+      <div>
+        <p class="eyebrow">living garden command center</p>
+        <h1>Backyard Plant Bible</h1>
+        <p id="gardenSubtitle">Loading your garden…</p>
+      </div>
+      <div class="hero-card">
+        <span id="monthName">June</span>
+        <b id="todayFocus">Summer mode</b>
+        <small id="syncStatus">Connecting…</small>
+      </div>
     </section>
 
-    <section class="filters glass">
-      <input id="search" placeholder="Search plants, notes, care, rabbits…" />
+    <section class="filters garden-panel">
+      <input id="search" placeholder="Search plants, zones, notes, rabbits, pruning…" />
       <select id="typeFilter"><option value="">All types</option></select>
+      <select id="zoneFilter"><option value="">All zones</option></select>
       <select id="sunFilter"><option value="">All sun</option></select>
       <select id="rabbitFilter"><option value="">All rabbit risk</option></select>
-      <select id="sortBy"><option value="Plant">Sort: Name</option><option value="Type">Sort: Type</option><option value="Bloom">Sort: Bloom</option><option value="Rabbit Risk">Sort: Rabbit risk</option></select>
+      <select id="sortBy"><option value="Plant">Name</option><option value="Type">Type</option><option value="Rabbit Risk">Rabbit risk</option><option value="Zone">Zone</option></select>
     </section>
 
     <section id="view-dashboard" class="view active">
       <div id="kpis" class="kpis"></div>
-      <div class="layout">
-        <section class="panel hero-panel"><h2>This week</h2><div id="tasksPreview"></div></section>
-        <section class="panel"><h2>Current bloom + harvest</h2><div id="nowList" class="mini-list"></div></section>
+      <div class="dashboard-grid">
+        <section class="garden-panel now-panel"><div class="panel-title"><h2>Blooming / Harvesting Now</h2><span id="nowCount"></span></div><div id="nowList" class="now-grid"></div></section>
+        <section class="garden-panel"><div class="panel-title"><h2>This Week</h2><span id="taskCount"></span></div><div id="tasksPreview" class="task-list"></div></section>
       </div>
-      <section class="panel"><h2>High-risk plants</h2><div id="riskStrip" class="risk-strip"></div></section>
+      <section class="garden-panel"><div class="panel-title"><h2>Yard Health Snapshot</h2><span>mid-season priorities</span></div><div id="snapshot" class="snapshot-grid"></div></section>
     </section>
 
-    <section id="view-plants" class="view"><div id="plantGrid" class="plant-grid"></div></section>
-    <section id="view-calendar" class="view"><section class="panel"><h2>Bloom + Fruit Calendar</h2><div id="calendar" class="calendar"></div></section></section>
-    <section id="view-tasks" class="view"><section class="panel"><h2>Maintenance + protection list</h2><div id="tasksFull" class="tasks"></div></section></section>
+    <section id="view-plants" class="view">
+      <div id="plantGrid" class="plant-grid"></div>
+    </section>
+
+    <section id="view-calendar" class="view">
+      <section class="garden-panel"><div class="panel-title"><h2>Bloom + Fruit Calendar</h2><span>month-by-month</span></div><div id="calendar" class="calendar"></div></section>
+    </section>
+
+    <section id="view-tasks" class="view">
+      <section class="garden-panel"><div class="panel-title"><h2>Maintenance Tasks</h2><span>smart seasonal filtering</span></div><div id="tasksFull" class="task-board"></div></section>
+    </section>
+
+    <section id="view-rabbit" class="view">
+      <section class="garden-panel"><div class="panel-title"><h2>Rabbit Triage</h2><span>stop feeding the tiny criminals</span></div><div id="rabbitGrid" class="rabbit-grid"></div></section>
+    </section>
   </main>
 
   <dialog id="plantDialog">
@@ -54,15 +75,16 @@
         <label>Name<input id="plantName" required /></label><label>Quantity<input id="quantity" type="number" min="0" /></label>
         <label>Type<input id="type" /></label><label>Zone / Location<input id="zone" /></label>
         <label>Sun<input id="sun" /></label><label>Water<input id="water" /></label>
-        <label>Bloom / Fruit Window<input id="bloom" /></label><label>Rabbit Risk<input id="rabbit" /></label>
-        <label>Prune<textarea id="prune"></textarea></label><label>Fertilize<textarea id="fertilize"></textarea></label>
-        <label class="wide">Fruit / Harvest / Protection<textarea id="fruit"></textarea></label>
-        <label class="wide">Winter / Freeze Notes<textarea id="winter"></textarea></label>
+        <label>Rabbit Risk<input id="rabbit" /></label><label>Photo URL<input id="photo" placeholder="optional image URL" /></label>
+        <label class="wide">Fertilize<textarea id="fertilize"></textarea></label>
+        <label class="wide">Prune / Deadhead<textarea id="prune"></textarea></label>
+        <label class="wide">Winter / Freeze<textarea id="winter"></textarea></label>
         <label class="wide">Notes<textarea id="notes"></textarea></label>
       </div>
-      <menu><button value="cancel" class="ghost">Cancel</button><button id="savePlant" value="default" class="primary">Save to Google Sheet</button></menu>
+      <menu><button value="cancel" class="soft">Cancel</button><button id="savePlant" value="default" class="primary">Save to Google Sheet</button></menu>
     </form>
   </dialog>
+
   <script src="app.js"></script>
 </body>
 </html>
