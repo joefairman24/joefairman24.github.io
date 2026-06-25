@@ -1,24 +1,22 @@
-# Joe's Backyard Plant Bible — GitHub Pages + Google Sheets
+# Joe's Backyard Plant Bible - GitHub Pages v2
 
-## 1) Create the Apps Script API
-1. Open the Google Sheet.
-2. Go to **Extensions → Apps Script**.
-3. Replace the default code with `Code.gs` from this package.
-4. Confirm this line has your Sheet ID:
-   `const SHEET_ID = '1JGwfNQDGFonrpYj5drQ3YZLHrox7By278MWfhZq4mQ0';`
-5. Click **Deploy → New deployment → Web app**.
-6. Set **Execute as: Me** and **Who has access: Anyone with the link**.
-7. Deploy and copy the Web App URL ending in `/exec`.
+## 1. Apps Script
+Paste `Code.gs` into Extensions > Apps Script from your Google Sheet, then deploy as a Web App:
+- Execute as: Me
+- Who has access: Anyone with the link
 
-## 2) Publish on GitHub Pages
-Upload these files to your repo:
-- `index.html`
-- `styles.css`
-- `app.js`
+Copy the Web App URL ending in `/exec`.
 
-Open the GitHub Pages URL. Paste the Apps Script `/exec` URL into the box and click **Save + Load**.
+## 2. GitHub Pages
+Open `app.js` and replace:
 
-## Notes
-- Reads use JSONP so GitHub Pages can load the Google Sheet without CORS drama.
-- Saves use a simple no-CORS POST; the app reloads after saving.
-- The app is flexible with column names like Plant/Name, Rabbit Risk/Rabbits, Bloom/Bloom Time, etc.
+```js
+const API_URL = 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
+```
+
+with your Apps Script Web App URL.
+
+Upload `index.html`, `styles.css`, and `app.js` to your GitHub Pages repo.
+
+## 3. Calendar fix
+The calendar now parses full month names, 3-letter names, ranges like `June-July`, and seasons like spring/summer/fall/winter.

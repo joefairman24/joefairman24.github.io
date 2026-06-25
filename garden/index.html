@@ -7,80 +7,61 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="hero">
-    <div>
-      <p class="eyebrow">🌿 Joe's Backyard</p>
-      <h1>Plant Bible Dashboard</h1>
-      <p class="sub">A visual garden command center connected to your Google Sheet.</p>
-    </div>
-    <div class="sync-card">
-      <label>Apps Script Web App URL</label>
-      <input id="apiUrl" placeholder="https://script.google.com/macros/s/.../exec" />
-      <button id="saveApi">Save + Load</button>
-      <small id="syncStatus">Not connected yet</small>
-    </div>
-  </header>
+  <aside class="sidebar">
+    <div class="brand"><span>🌿</span><div><b>Joe's Backyard</b><small>Plant Bible</small></div></div>
+    <nav>
+      <button class="nav active" data-view="dashboard">Dashboard</button>
+      <button class="nav" data-view="plants">Plant Library</button>
+      <button class="nav" data-view="calendar">Bloom Calendar</button>
+      <button class="nav" data-view="tasks">Tasks</button>
+    </nav>
+    <div class="sync"><small id="syncStatus">Loading garden…</small><button id="reload">Refresh</button></div>
+  </aside>
 
   <main>
-    <section class="kpis" id="kpis"></section>
+    <section class="topbar">
+      <div><p class="eyebrow">living garden command center</p><h1>Backyard Plant Bible</h1></div>
+      <button id="addPlant" class="primary">+ Add plant</button>
+    </section>
 
-    <section class="toolbar glass">
-      <input id="search" placeholder="Search plants, notes, care, rabbits..." />
+    <section class="filters glass">
+      <input id="search" placeholder="Search plants, notes, care, rabbits…" />
       <select id="typeFilter"><option value="">All types</option></select>
       <select id="sunFilter"><option value="">All sun</option></select>
       <select id="rabbitFilter"><option value="">All rabbit risk</option></select>
-      <select id="sortBy">
-        <option value="name">Sort: Name</option>
-        <option value="type">Sort: Type</option>
-        <option value="bloom">Sort: Bloom</option>
-        <option value="rabbit">Sort: Rabbit risk</option>
-      </select>
-      <button id="addPlant">+ Add plant</button>
+      <select id="sortBy"><option value="Plant">Sort: Name</option><option value="Type">Sort: Type</option><option value="Bloom">Sort: Bloom</option><option value="Rabbit Risk">Sort: Rabbit risk</option></select>
     </section>
 
-    <section class="grid two">
-      <div class="panel">
-        <h2>Today / This Week</h2>
-        <div id="tasks" class="tasks"></div>
+    <section id="view-dashboard" class="view active">
+      <div id="kpis" class="kpis"></div>
+      <div class="layout">
+        <section class="panel hero-panel"><h2>This week</h2><div id="tasksPreview"></div></section>
+        <section class="panel"><h2>Current bloom + harvest</h2><div id="nowList" class="mini-list"></div></section>
       </div>
-      <div class="panel">
-        <h2>Bloom + Fruit Calendar</h2>
-        <div id="timeline" class="timeline"></div>
-      </div>
+      <section class="panel"><h2>High-risk plants</h2><div id="riskStrip" class="risk-strip"></div></section>
     </section>
 
-    <section class="panel">
-      <h2>Plants</h2>
-      <div id="plantGrid" class="plant-grid"></div>
-    </section>
+    <section id="view-plants" class="view"><div id="plantGrid" class="plant-grid"></div></section>
+    <section id="view-calendar" class="view"><section class="panel"><h2>Bloom + Fruit Calendar</h2><div id="calendar" class="calendar"></div></section></section>
+    <section id="view-tasks" class="view"><section class="panel"><h2>Maintenance + protection list</h2><div id="tasksFull" class="tasks"></div></section></section>
   </main>
 
   <dialog id="plantDialog">
     <form method="dialog" class="modal">
-      <h2 id="modalTitle">Plant</h2>
-      <input type="hidden" id="rowNumber" />
+      <h2 id="modalTitle">Plant</h2><input type="hidden" id="rowNumber" />
       <div class="form-grid">
-        <label>Name<input id="plantName" required /></label>
-        <label>Quantity<input id="quantity" type="number" min="0" /></label>
-        <label>Type<input id="type" /></label>
-        <label>Zone / Location<input id="zone" /></label>
-        <label>Sun<input id="sun" /></label>
-        <label>Water<input id="water" /></label>
-        <label>Bloom / Fruit Window<input id="bloom" /></label>
-        <label>Rabbit Risk<input id="rabbit" /></label>
-        <label>Prune<input id="prune" /></label>
-        <label>Fertilize<input id="fertilize" /></label>
+        <label>Name<input id="plantName" required /></label><label>Quantity<input id="quantity" type="number" min="0" /></label>
+        <label>Type<input id="type" /></label><label>Zone / Location<input id="zone" /></label>
+        <label>Sun<input id="sun" /></label><label>Water<input id="water" /></label>
+        <label>Bloom / Fruit Window<input id="bloom" /></label><label>Rabbit Risk<input id="rabbit" /></label>
+        <label>Prune<textarea id="prune"></textarea></label><label>Fertilize<textarea id="fertilize"></textarea></label>
         <label class="wide">Fruit / Harvest / Protection<textarea id="fruit"></textarea></label>
         <label class="wide">Winter / Freeze Notes<textarea id="winter"></textarea></label>
         <label class="wide">Notes<textarea id="notes"></textarea></label>
       </div>
-      <menu>
-        <button value="cancel">Cancel</button>
-        <button id="savePlant" value="default">Save to Google Sheet</button>
-      </menu>
+      <menu><button value="cancel" class="ghost">Cancel</button><button id="savePlant" value="default" class="primary">Save to Google Sheet</button></menu>
     </form>
   </dialog>
-
   <script src="app.js"></script>
 </body>
 </html>
